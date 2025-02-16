@@ -4,6 +4,11 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
+
+# EMAILS
+PROD_EMAIL = Path(os.environ.get("PROD_EMAIL"))
+TEST_EMAIL = Path(os.environ.get("TEST_EMAIL"))
+
 # FILES
 LOG_FILE = Path(os.environ.get("LOG_FILE"))
 TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))

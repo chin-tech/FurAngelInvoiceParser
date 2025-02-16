@@ -32,6 +32,7 @@ SCOPES = [
 
 # GMAIL DATE FORMAT
 GMAIL_DATE = "%a, %d %b %Y %H:%M:%S %z"
+GMAIL_DATE_ZONE = "%a, %d %b %Y %H:%M:%S %z (%Z)"
 
 # INVOICE LABELS
 INCOMPLETE_INVOICE = 'Label_5838368921937526589'
@@ -185,10 +186,17 @@ def get_invoices_gmail(gmail, folder_name, days_ago: int = None):
 
 
 def get_email_dates_sender(headers, sender: str, date: str) -> (str, str):
+    formats = [GMAIL_DATE, GMAIL_DATE_ZONE]
     for header in headers:
         if header['name'] == "Date":
-            email_date = dt.strptime(header['value'], GMAIL_DATE)
-            date = email_date.strftime("%Y-%m-%d")
+            for format in formats:
+                try:
+                    email_date = dt.strptime(header['value'], format)
+                    date = email_date.strftime("%Y-%m-%d")
+                except Exception as e:
+                    continue
+                if date == '1999-01-01':
+                    log.warn(f"TIME FORMAT IS UNKNOWN! : {header['value']}")
         if header["name"] == "From":
             sender_email = header["value"].split(
                 "<")[-1].replace(">", "").strip()
@@ -204,10 +212,10 @@ def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False,
     invoice_folder = get_drive_folder(drive, folder)
     unprocessed_folder = get_drive_folder(
         drive, 'unprocessed_invoices', parent_folder_id=invoice_folder)
-    print(unprocessed_folder)
     # Process each message
     success, fail = pd.DataFrame(), pd.DataFrame()
-    for msg in messages:
+    for i, msg in enumerate(messages):
+        # print(f"Message: {i:04d} / {len(messages):04d}", end='\r')
         msg_id = msg['id']
         message = gmail.users().messages().get(userId='me', id=msg_id).execute()
         payload = message.get("payload", {})
@@ -293,6 +301,13 @@ def upload_drive(drive, file_data: Union[pd.DataFrame, io.BytesIO], file_name: s
     if isinstance(file_data, pd.DataFrame):
         csv = file_data.to_csv(index=False)
         file_data = io.BytesIO(csv.encode())
+    initial_check = f'name = "{file_name}" and "{
+        parents[0]}" in parents and trashed = false'
+
+    r = drive.files().list(q=initial_check, spaces='drive', fields='files(id)').execute()
+    if r.get('files'):
+        log.warn(f"File: '{file_name}' exits. Skipping")
+        return None
     metadata = {
         'name': file_name,
         'parents': parents,

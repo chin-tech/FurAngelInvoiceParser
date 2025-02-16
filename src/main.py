@@ -13,7 +13,7 @@ from animal_getter import get_all_animals, match_animals, get_probable_matches
 from invoices import get_parser
 from envstuff import get_login_data
 from dotenv import load_dotenv
-from constants import LOG_FILE, TEST_TOKEN, PROD_TOKEN, OAUTH_FILE, INVOICE_DIR, NON_INVOICES_DIR, TEST_LABEL, TEST_LABEL_COMPLETE
+from constants import LOG_FILE, TEST_TOKEN, PROD_TOKEN, OAUTH_FILE, INVOICE_DIR, NON_INVOICES_DIR, TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL, PROD_EMAIL
 
 load_dotenv()
 
@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 log_formatter = logging.Formatter('[%(asctime)s] %(message)s')
 
 # GMAIL CONSTANTS
-GMAIL_INVOICE_LABEL = "Invoices/Vet Invoice"
+GMAIL_INVOICE_LABEL = "Invoices/Vet invoice"
 
 # Drive Constants #
 DRIVE_INVOICES_FOLDER = "VET_INVOICES"
@@ -55,8 +55,21 @@ def routine_invoice_processor():
 def process_all_emailed_invoices():
     creds = get_creds(OAUTH_FILE, PROD_TOKEN)
     gmail = get_gmail_service(creds)
+    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+    if email != PROD_EMAIL:
+        return 'Authorization Error', 200
     drive = get_drive_service(creds)
     messages = get_invoices_gmail(gmail, GMAIL_INVOICE_LABEL)
+    if not messages:
+        raise Exception(f"No messages in folder! {GMAIL_INVOICE_LABEL} ")
+    msgs = {}
+    for m in messages:
+        if msgs.get(m['threadId']):
+            msgs[m['threadId']].append(m['id'])
+        else:
+            msgs[m['threadId']] = [m['id']]
+    messages = [{'id': i[1][0], 'threadId': i[0]} for i in msgs.items()]
+    log.info(f"Starting processing of {len(messages)}")
     good = process_msg_invoices(gmail, drive, messages, DRIVE_INVOICES_FOLDER)
     if good:
         return 'Success!', 200
@@ -69,6 +82,9 @@ def routine_processor():
     days = 14
     creds = get_creds(OAUTH_FILE, PROD_TOKEN)
     gmail = get_gmail_service(creds)
+    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+    if email != PROD_EMAIL:
+        return 'Authorization Error', 200
     drive = get_drive_service(creds)
     messages = get_invoices_gmail(gmail, GMAIL_INVOICE_LABEL, days)
     good = process_msg_invoices(gmail, drive, messages, DRIVE_INVOICES_FOLDER)

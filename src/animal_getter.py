@@ -128,4 +128,5 @@ def match_animals(cost_df: pd.DataFrame, animal_df: pd.DataFrame) -> pd.DataFram
                         & (cost_df['COSTAMOUNT'] == 0))].copy()
     cost_df.sort_values(by='date', inplace=True)
     cost_df.drop(columns=['date'], inplace=True)
+    cost_df.drop_duplicates(inplace=True)
     return cost_df

@@ -13,6 +13,6 @@ EXPOSE 8000
 # RUN chown -R app:app /usr/local/app
 # USER app
 
-CMD ["gunicorn", "--workers", "3", "--bind", "0.0.0.0:8000", "--timeout", "1200", "main:app"]
+CMD ["gunicorn", "--workers", "3", "--bind", "0.0.0.0:8000", "--timeout", "1800", "main:app"]
 
 
