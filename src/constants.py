@@ -1,5 +1,18 @@
 from pathlib import Path
 from parsers import Cost
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
+# FILES
+LOG_FILE = Path(os.environ.get("LOG_FILE"))
+TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))
+PROD_TOKEN = Path(os.environ.get("PROD_TOKEN"))
+OAUTH_FILE = Path(os.environ.get("AUTH_FILE"))
+
+# GMAIL LABELS
+TEST_LABEL = 'Label_8306108300123845242'
+TEST_LABEL_COMPLETE = 'Label_7884775180973112661'
 
 # DATE CONSTANTS
 DATE_MDY = "%m-%d-%y"
@@ -7,10 +20,9 @@ DATE_M_D_Y = "%m/%d/%Y"
 DATE_MDYYYY = "%m-%d-%Y"
 
 # DIRECTORIES
-DATA_DIR = Path("data/")
-BAD_INVOICE_PATH = DATA_DIR / Path("invoices/bad_invoices")
-ANIMAL_LIST_CSV = DATA_DIR / "all_animals_inducted.csv"
-INVOICE_DIR = Path("data/parsed_invoices")
+DATA_DIR = Path("../data/")
+INVOICE_DIR = Path("../data/invoices/")
+NON_INVOICES_DIR = Path("../data/non_invoices/")
 
 
 class Regex:

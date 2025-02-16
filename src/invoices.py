@@ -7,7 +7,7 @@ from typing import Protocol
 from pypdf import PdfReader
 from pathlib import Path
 from parsers import Cost, Test, Medication, Vaccine
-from constants import DATE_MDY, DATE_M_D_Y, DATE_MDYYYY, INVOICE_DIR, BAD_INVOICE_PATH, DATA_DIR, PROCEDURE_MAP, Regex
+from constants import DATE_MDY, DATE_M_D_Y, DATE_MDYYYY, INVOICE_DIR, DATA_DIR, PROCEDURE_MAP, Regex
 from datetime import datetime as dt
 
 DATE_FORMATS = [DATE_MDY, DATE_M_D_Y, DATE_MDYYYY]

@@ -13,6 +13,7 @@ from animal_getter import get_all_animals, match_animals, get_probable_matches
 from invoices import get_parser
 from envstuff import get_login_data
 from dotenv import load_dotenv
+from constants import LOG_FILE, TEST_TOKEN, PROD_TOKEN, OAUTH_FILE, INVOICE_DIR, NON_INVOICES_DIR, TEST_LABEL, TEST_LABEL_COMPLETE
 
 load_dotenv()
 
@@ -32,18 +33,14 @@ DRIVE_INVOICES_FOLDER = "VET_INVOICES"
 
 
 # LOCAL CONSTANTS
-INVOICE_DIR = Path("data/invoices/")
-NON_INVOICES_DIR = Path("data/non_invoices/")
-LOG_FILE = Path(os.environ.get("LOG_FILE"))
-TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))
-PROD_TOKEN = Path(os.environ.get("PROD_TOKEN"))
-OAUTH_FILE = Path(os.environ.get("AUTH_FILE"))
-TEST_LABEL = 'Label_8306108300123845242'
-TEST_LABEL_COMPLETE = 'Label_7884775180973112661'
-
-# DATE STRING CONSTANTS ##
-DATE_PARSE_FORMAT = "%m-%d-%y"
-DATE_FORMAT = "%m/%d/%Y"
+# INVOICE_DIR = Path("../data/invoices/")
+# NON_INVOICES_DIR = Path("../data/non_invoices/")
+# LOG_FILE = Path(os.environ.get("LOG_FILE"))
+# TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))
+# PROD_TOKEN = Path(os.environ.get("PROD_TOKEN"))
+# OAUTH_FILE = Path(os.environ.get("AUTH_FILE"))
+# TEST_LABEL = 'Label_8306108300123845242'
+# TEST_LABEL_COMPLETE = 'Label_7884775180973112661'
 
 
 app = Flask(__name__)
@@ -175,7 +172,7 @@ def run_local():
         print(e.name)
     print("____________________")
     print(f"Successfully Processed: {invoice_count} invoices")
-    output_path = Path("data/completed_csvs")
+    output_path = Path("../data/completed_csvs")
     if invoice_items.empty:
         raise ValueError("WE MADE A MISTAKE!")
     invoice_items = match_animals(invoice_items, db_animals)
