@@ -131,7 +131,7 @@ def test_process():
     drive = get_drive_service(creds)
     messages = get_invoices_gmail(gmail, 'invoices')
     good = process_msg_invoices(gmail, drive, messages, 'test_invoices123',
-                                from_label=TEST_LABEL, to_label=TEST_LABEL_COMPLETE)
+                                from_label=TEST_LABEL, to_label=TEST_LABEL_COMPLETE, is_debug=True)
     if good:
         return 'Success!', 200
     else:

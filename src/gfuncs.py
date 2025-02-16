@@ -197,7 +197,7 @@ def get_email_dates_sender(headers, sender: str, date: str) -> (str, str):
     return sender, date
 
 
-def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False, from_label=INCOMPLETE_INVOICE, to_label=COMPLETE_INVOICE) -> (pd.DataFrame, pd.DataFrame):
+def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False, from_label=INCOMPLETE_INVOICE, to_label=COMPLETE_INVOICE, is_debug: bool = False) -> (pd.DataFrame, pd.DataFrame):
     animal_db = get_all_animals(get_login_data())
     stats = Statistics()
     stats.emails_count = len(messages)
@@ -245,12 +245,10 @@ def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False,
                 normalized_name}"
             output_path = unprocessed_folder
             try:
-                print("parsing....")
                 parser = get_parser(
                     invoice, filename=filename, is_drive=True)
                 parser.parse_invoice()
                 filename = parser.name
-                print('\t', filename)
                 output_path = get_drive_folder(
                     drive, parser.drive_dir, invoice_folder)
                 parsed_items = match_animals(parser.items, animal_db)
@@ -281,7 +279,7 @@ def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False,
                 stats.fails.append(filename)
             upload_drive(drive, invoice, filename, [
                          output_path], part['mimeType'])
-    # stats.upload_success = upload_dataframe_to_database(success)
+    stats.upload_success = upload_dataframe_to_database(success, is_debug)
     success_file = f"{dt.now().date()}-successes.csv"
     fail_file = f"{dt.now().date()}-failures.csv"
     upload_drive(drive, success, success_file, [invoice_folder], 'text/csv')

@@ -39,7 +39,7 @@ def get_all_animals(login_data: dict) -> pd.DataFrame:
         print(f"[Unexpected Error]: {e}")
 
 
-def upload_dataframe_to_database(df: pd.DataFrame):
+def upload_dataframe_to_database(df: pd.DataFrame, is_debug: bool = False):
     login_data = get_login_data()
     try:
         session = requests.Session()
@@ -52,6 +52,9 @@ def upload_dataframe_to_database(df: pd.DataFrame):
             'filechooser': ('invoice_uploader.csv', csv_data, 'text/csv'),
             'encoding': (None, 'utf-8-sig'),
         }
+        if is_debug:
+            log.info(f"Made {files} - Not uploading")
+            return True
         resp = session.post(CSV_UPLOAD_URL, files=files)
         if resp.status_code != 200:
             print(resp.text)
