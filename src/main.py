@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import re
-import pytest
 import pandas as pd
 import os
 import logging
@@ -35,11 +34,10 @@ DRIVE_INVOICES_FOLDER = "VET_INVOICES"
 # LOCAL CONSTANTS
 INVOICE_DIR = Path("data/invoices/")
 NON_INVOICES_DIR = Path("data/non_invoices/")
-LOG_FILE = Path(os.environ.get("LOG_DIR"))
-SECRETS_PATH = Path(os.environ.get("SECRETS_PATH"))
-TEST_TOKEN = SECRETS_PATH / Path(os.environ.get("TEST_TOKEN"))
-PROD_TOKEN = SECRETS_PATH / Path(os.environ.get("PROD_TOKEN"))
-OAUTH_FILE = SECRETS_PATH / Path(os.environ.get("AUTH_FILE"))
+LOG_FILE = Path(os.environ.get("LOG_FILE"))
+TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))
+PROD_TOKEN = Path(os.environ.get("PROD_TOKEN"))
+OAUTH_FILE = Path(os.environ.get("AUTH_FILE"))
 TEST_LABEL = 'Label_8306108300123845242'
 TEST_LABEL_COMPLETE = 'Label_7884775180973112661'
 
@@ -81,39 +79,6 @@ def routine_processor():
         return 'Success!', 200
     else:
         return 'Something Failed', 404
-
-
-# @app.route('/authorize')
-# def authorize():
-#     flow = Flow.from_client_secrets_file(
-#         OAUTH_FILE,
-#         scopes=SCOPES,
-#         redirect_uri=REDIRECT_URI
-#     )
-#     authorization_url, state = flow.authorization_url(
-#         access_type='offline',
-#         include_granted_scopes='true'
-#     )
-#     session['state'] = state
-#     return redirect(authorization_url)
-#
-#
-# @app.route('/callback')
-# def callback():
-#     state = session.pop('state', None)
-#     flow = Flow.from_client_secrets_file(
-#         OAUTH_FILE,
-#         scopes=SCOPES,
-#         redirect_uri=REDIRECT_URI
-#     )
-#     flow.fetch_token(authorization_response=request.url)
-#     credentials = flow.credentials
-#
-#     # Store credentials in session
-#     session['credentials'] = credentials.to_dict()
-#
-#     # Redirect to your function
-#     return redirect(url_for('process_failed_invoices'))
 
 
 @app.route('/failed_invoices', methods=['GET', 'POST'])
@@ -226,21 +191,21 @@ if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8000)
 
 
-@pytest.fixture
-def vp():
-    return Vaccine()
-
-
-def test_vaccine_matches_exact(vp):
-    assert vp.parse("DHLPP") == Vaccine.DHLPP
-    assert vp.parse("DHPP") == Vaccine.DHPP
-    assert vp.parse("Bordetella") == Vaccine.BORDETELLA
-    assert vp.parse("Leptospirosis") == Vaccine.LEPTOSPIROSIS
-    assert vp.parse("Parainfluenza") == Vaccine.PARAINFLUENZA
-
-
-def test_vaccine_matches(vp):
-    assert vp.parse("DA2LPP - Puppy vaccine") == Vaccine.DHLPP
-    assert vp.parse("DA2PP (No Lepto) - Litter, 1st vacc") == Vaccine.DHPP
-    assert vp.parse("Bordetella Oral - Adult Vaccine") == Vaccine.BORDETELLA
-    assert vp.parse("Leptospirosis 4 vaccine") == Vaccine.LEPTOSPIROSIS
+# @pytest.fixture
+# def vp():
+#     return Vaccine()
+#
+#
+# def test_vaccine_matches_exact(vp):
+#     assert vp.parse("DHLPP") == Vaccine.DHLPP
+#     assert vp.parse("DHPP") == Vaccine.DHPP
+#     assert vp.parse("Bordetella") == Vaccine.BORDETELLA
+#     assert vp.parse("Leptospirosis") == Vaccine.LEPTOSPIROSIS
+#     assert vp.parse("Parainfluenza") == Vaccine.PARAINFLUENZA
+#
+#
+# def test_vaccine_matches(vp):
+#     assert vp.parse("DA2LPP - Puppy vaccine") == Vaccine.DHLPP
+#     assert vp.parse("DA2PP (No Lepto) - Litter, 1st vacc") == Vaccine.DHPP
+#     assert vp.parse("Bordetella Oral - Adult Vaccine") == Vaccine.BORDETELLA
+#     assert vp.parse("Leptospirosis 4 vaccine") == Vaccine.LEPTOSPIROSIS

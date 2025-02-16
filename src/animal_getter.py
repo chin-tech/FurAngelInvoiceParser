@@ -4,7 +4,6 @@ from datetime import timedelta as td
 from datetime import datetime as dt
 from envstuff import get_login_data
 import re
-import os
 import requests
 import logging
 
@@ -127,35 +126,3 @@ def match_animals(cost_df: pd.DataFrame, animal_df: pd.DataFrame) -> pd.DataFram
     cost_df.sort_values(by='date', inplace=True)
     cost_df.drop(columns=['date'], inplace=True)
     return cost_df
-
-# def get_name(txt: str, regex: str, date: dt, chosen_animal: pd.DataFrame) -> pd.DataFrame:
-#     if regex:
-#         match = re.search(regex, txt)
-#         if not match:
-#             return chosen_animal
-#         original_match = match.group(1)
-#     else:
-#         original_match = txt
-#
-#     dog_name = re.sub(r"#\d+|\d+|", "", original_match).strip(" ")
-#     dog_name = re.sub(r"[,'\"]", '', dog_name)
-#
-#     poss_match = get_likely_animals(dog_name, ANIMALS, date)
-#     if poss_match.shape[0] == 1:
-#         return poss_match
-#     return resolve_name(dog_name, original_match, chosen_animal, poss_match)
-#
-#
-# def resolve_name(name: str, og_match: str, previous_animal: pd.DataFrame, animal_df: pd.DataFrame) -> pd.DataFrame:
-#     possible_names = animal_df['name'].values
-#     if animal_df.shape[0] > 1:
-#         ERRATA_ANIMALS.loc[0, 'ANIMALNAME'] = f'[NameError] {og_match}'
-#         return ERRATA_ANIMALS
-#     if animal_df.empty:
-#         log.error(
-#             f"{current_invoice} - {og_match} | Couldn't find in database"
-#         )
-#         ERRATA_ANIMALS.loc[0,
-#                            'ANIMALNAME'] = f'[DatabaseError] {og_match}'
-#         return ERRATA_ANIMALS
-#     return animal_df
