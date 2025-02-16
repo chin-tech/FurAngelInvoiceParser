@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Retry Invoices</title>
+</head>
+<body>
+    <h1>Failed Invoices</h1>
+    <form method="POST">
+        {% for fail_invoice, possible_animals in data_to_show %}
+            <h2>{{ fail_invoice.name }} - {{ fail_invoice.invoice }} - {{ fail_invoice.COSTDATE }}</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Animal Name</th>
+                        <th>Date Brought In</th>
+                        <th>Time on Shelter</th>
+                        <th>Select</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for animal in possible_animals %}
+                        <tr>
+                            <td>{{ animal.ANIMALNAME }}</td>
+                            <td>{{ animal.DATEBROUGHTIN }}</td>
+                            <td>{{ animal.TIMEONSHELTER }}</td>
+                            <td>
+                              <input type="radio" name="{{ fail_invoice.Index }}" value="{{ animal.ANIMALNAME }}">
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    <tr>
+                        <td><input type="text" name="new_animal_{{ fail_invoice.Index }}"></td>
+                        <td><input type="date" name="new_date_{{ fail_invoice.Index }}"></td>
+                        <td><input type="text" name="new_time_{{ fail_invoice.Index }}"></td>
+                        <td><input type="radio" name="{{ fail_invoice.Index }}" value="new">Add New</td>
+                    </tr>
+                </tbody>
+            </table>
+        {% endfor %}
+        <button type="submit">Retry Processing</button>
+    </form>
+
+    <script>
+        // Add event listeners to the radio buttons
+        const radioButtons = document.querySelectorAll('input[type="radio"]');
+        radioButtons.forEach(radioButton => {
+            radioButton.addEventListener('change', () => {
+                const name = radioButton.name;
+                const newAnimalRow = document.querySelector(`input[name="new_animal_${name}"]`).closest('tr');
+                if (radioButton.value === 'new') {
+                    // Show the new animal row
+                    newAnimalRow.style.display = 'table-row';
+                } else {
+                    // Hide the new animal row
+                    newAnimalRow.style.display = 'none';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
