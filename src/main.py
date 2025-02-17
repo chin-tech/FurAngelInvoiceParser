@@ -47,8 +47,11 @@ app = Flask(__name__)
 
 def verify_request():
     """Verify the OIDC token from Cloud Scheduler"""
-    with open(SVC_ACCOUNT, 'r') as f:
-        info = json.load(f)
+    if Path(SVC_ACCOUNT).exists():
+        with open(SVC_ACCOUNT, 'r') as f:
+            info = json.load(f)
+    else:
+        info = json.loads(SVC_ACCOUNT)
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return jsonify({"error": "Unauthorized"}), 403
@@ -76,7 +79,7 @@ def routine_invoice_processor():
 @app.route('/process_all', methods=['GET'])
 def process_all_emailed_invoices():
     assert IS_DEBUG == 1
-    creds = get_creds(OAUTH_FILE, PROD_TOKEN)
+    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
     gmail = get_gmail_service(creds)
     email = gmail.users().getProfile(userId='me').execute()['emailAddress']
     if email != PROD_EMAIL:
