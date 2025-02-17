@@ -7,6 +7,7 @@ import shutil
 import json
 from pathlib import Path
 import google.auth.transport.requests
+from google.oauth2 import id_token
 # import google.ouath2.id_token
 from google_auth_oauthlib.flow import Flow
 from rich import print
@@ -61,7 +62,7 @@ def verify_request():
     print(f"{auth_header}")
     try:
         request_adapter = google.auth.transport.requests.Request()
-        decoded_token = google.oauth2.id_token.verify_oauth2_token(
+        decoded_token = id_token.verify_oauth2_token(
             token, request_adapter
         )
 
