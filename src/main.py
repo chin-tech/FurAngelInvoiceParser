@@ -54,9 +54,11 @@ def verify_request():
         info = json.loads(SVC_ACCOUNT)
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
+        print(f"Token not authorized: \n\tAuth Headers: {auth_header}")
         return jsonify({"error": "Unauthorized"}), 403
 
     token = auth_header.split("Bearer ")[1]
+    print(f"{auth_header}")
     try:
         request_adapter = google.auth.transport.requests.Request()
         decoded_token = google.oauth2.id_token.verify_oauth2_token(
@@ -64,8 +66,11 @@ def verify_request():
         )
 
         if decoded_token["email"] != info['client_email']:
+            print(f"Token not authorized: {
+                  decoded_token['email']} vs. {info['client_email']}")
             return jsonify({"error": "Unauthorized requester"}), 403
     except Exception as e:
+        print(f"Token not authorized: {e} \n\tAuth Headers: {auth_header}")
         return jsonify({"error": f"Invalid token: {str(e)}"}), 403
 
     return None  # If everything is fine, return None
