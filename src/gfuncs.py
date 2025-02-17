@@ -66,24 +66,16 @@ def get_creds(client_id_file: str, token_file: str) -> Credentials:
 
 
 def get_secret(name, project) -> Credentials:
-    if Path(SVC_ACCOUNT).exist():
-        client = secretmanager.SecretManagerServiceClient.from_service_account_file(
-            SVC_ACCOUNT)
-    else:
-        client = secretmanager.SecretManagerServiceClient.from_service_account_info(
-            json.loads(SVC_ACCOUNT))
+    client = secretmanager.SecretManagerServiceClient.from_service_account_info(
+        SVC_ACCOUNT)
     path = f"projects/{project}/secrets/{name}/versions/latest"
     response = client.access_secret_version(name=path)
     return pickle.loads(response.payload.data)
 
 
 def update_secret(name, project, value):
-    if Path(SVC_ACCOUNT).exist():
-        client = secretmanager.SecretManagerServiceClient.from_service_account_file(
-            SVC_ACCOUNT)
-    else:
-        client = secretmanager.SecretManagerServiceClient.from_service_account_info(
-            json.loads(SVC_ACCOUNT))
+    client = secretmanager.SecretManagerServiceClient.from_service_account_info(
+        SVC_ACCOUNT)
 
     parent = f"projects/{project}/secrets/{name}"
     client.add_secret_version(

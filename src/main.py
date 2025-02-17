@@ -4,7 +4,6 @@ import pandas as pd
 import os
 import logging
 import shutil
-import json
 from pathlib import Path
 import google.auth.transport.requests
 from google.oauth2 import id_token
@@ -48,11 +47,6 @@ app = Flask(__name__)
 
 def verify_request():
     """Verify the OIDC token from Cloud Scheduler"""
-    if Path(SVC_ACCOUNT).exists():
-        with open(SVC_ACCOUNT, 'r') as f:
-            info = json.load(f)
-    else:
-        info = json.loads(SVC_ACCOUNT)
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         print(f"Token not authorized: \n\tAuth Headers: {auth_header}")
@@ -66,9 +60,9 @@ def verify_request():
             token, request_adapter
         )
 
-        if decoded_token["email"] != info['client_email']:
+        if decoded_token["email"] != SVC_ACCOUNT['client_email']:
             print(f"Token not authorized: {
-                  decoded_token['email']} vs. {info['client_email']}")
+                  decoded_token['email']} vs. {SVC_ACCOUNT['client_email']}")
             return jsonify({"error": "Unauthorized requester"}), 403
     except Exception as e:
         print(f"Token not authorized: {e} \n\tAuth Headers: {auth_header}")

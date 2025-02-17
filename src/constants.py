@@ -2,6 +2,7 @@ from pathlib import Path
 from parsers import Cost
 from dotenv import load_dotenv
 import os
+import json
 load_dotenv()
 
 IS_DEBUG = os.environ.get("DEBUG_STATUS")
@@ -36,6 +37,12 @@ DATE_MDYYYY = "%m-%d-%Y"
 DATA_DIR = Path("../data/")
 INVOICE_DIR = Path("../data/invoices/")
 NON_INVOICES_DIR = Path("../data/non_invoices/")
+
+if Path(SVC_ACCOUNT).exists():
+    with open(SVC_ACCOUNT, 'r') as f:
+        SVC_ACCOUNT = json.load(f)
+else:
+    SVC_ACCOUNT = json.loads(SVC_ACCOUNT)
 
 
 def get_login_data() -> dict:
