@@ -4,10 +4,18 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
+IS_DEBUG = os.environ.get("DEBUG_STATUS")
+
+PROJECT_ID = os.environ.get("PROJECT_ID")
+SVC_ACCOUNT = os.environ.get("SERVICE_ACCOUNT_FILE")
+SECRET_NAME = os.environ.get("SECRET_NAME")
+DB_NAME = os.environ.get("DB_NAME")
+DB_USERNAME = os.environ.get("DB_USER")
+DB_PASS = os.environ.get("DB_PASS")
 
 # EMAILS
-PROD_EMAIL = Path(os.environ.get("PROD_EMAIL"))
-TEST_EMAIL = Path(os.environ.get("TEST_EMAIL"))
+PROD_EMAIL = os.environ.get("PROD_EMAIL")
+TEST_EMAIL = os.environ.get("TEST_EMAIL")
 
 # FILES
 LOG_FILE = Path(os.environ.get("LOG_FILE"))
@@ -28,6 +36,14 @@ DATE_MDYYYY = "%m-%d-%Y"
 DATA_DIR = Path("../data/")
 INVOICE_DIR = Path("../data/invoices/")
 NON_INVOICES_DIR = Path("../data/non_invoices/")
+
+
+def get_login_data() -> dict:
+    return {
+        'database': DB_NAME,
+        'username': DB_USERNAME,
+        'password': DB_PASS,
+    }
 
 
 class Regex:

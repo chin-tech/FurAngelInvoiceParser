@@ -4,18 +4,28 @@ import pandas as pd
 import os
 import logging
 import shutil
-from rich import print
+import json
 from pathlib import Path
-from flask import Flask, request, redirect, url_for, session, render_template
+import google.auth.transport.requests
+# import google.ouath2.id_token
 from google_auth_oauthlib.flow import Flow
-from gfuncs import get_creds, process_msg_invoices, get_drive_service, get_gmail_service, get_invoices_gmail, get_drive_folder, parse_failed_pdfs_from_drive, get_failed_pdfs
+from rich import print
+from flask import Flask, request, redirect, url_for, session, render_template, jsonify
+from constants import LOG_FILE
+from constants import TEST_TOKEN, PROD_TOKEN, OAUTH_FILE
+from constants import INVOICE_DIR, NON_INVOICES_DIR
+from constants import TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL
+from constants import PROD_EMAIL, SVC_ACCOUNT, PROJECT_ID, SECRET_NAME
+from constants import IS_DEBUG
+from constants import get_login_data
+from gfuncs import get_creds, get_creds_secret
+from gfuncs import get_drive_service, get_gmail_service
+from gfuncs import get_invoices_gmail  # , get_drive_folder
+from gfuncs import process_msg_invoices, prune_by_threadId  # , get_failed_pdfs
+# from gfuncs import parse_failed_pdfs_from_drive
+
 from animal_getter import get_all_animals, match_animals, get_probable_matches
 from invoices import get_parser
-from envstuff import get_login_data
-from dotenv import load_dotenv
-from constants import LOG_FILE, TEST_TOKEN, PROD_TOKEN, OAUTH_FILE, INVOICE_DIR, NON_INVOICES_DIR, TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL, PROD_EMAIL
-
-load_dotenv()
 
 
 # Redirect URI (must match the one in your Google Cloud Console)
@@ -32,18 +42,30 @@ GMAIL_INVOICE_LABEL = "Invoices/Vet invoice"
 DRIVE_INVOICES_FOLDER = "VET_INVOICES"
 
 
-# LOCAL CONSTANTS
-# INVOICE_DIR = Path("../data/invoices/")
-# NON_INVOICES_DIR = Path("../data/non_invoices/")
-# LOG_FILE = Path(os.environ.get("LOG_FILE"))
-# TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))
-# PROD_TOKEN = Path(os.environ.get("PROD_TOKEN"))
-# OAUTH_FILE = Path(os.environ.get("AUTH_FILE"))
-# TEST_LABEL = 'Label_8306108300123845242'
-# TEST_LABEL_COMPLETE = 'Label_7884775180973112661'
-
-
 app = Flask(__name__)
+
+
+def verify_request():
+    """Verify the OIDC token from Cloud Scheduler"""
+    with open(SVC_ACCOUNT, 'r') as f:
+        info = json.load(f)
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Unauthorized"}), 403
+
+    token = auth_header.split("Bearer ")[1]
+    try:
+        request_adapter = google.auth.transport.requests.Request()
+        decoded_token = google.oauth2.id_token.verify_oauth2_token(
+            token, request_adapter
+        )
+
+        if decoded_token["email"] != info['client_email']:
+            return jsonify({"error": "Unauthorized requester"}), 403
+    except Exception as e:
+        return jsonify({"error": f"Invalid token: {str(e)}"}), 403
+
+    return None  # If everything is fine, return None
 
 
 @app.route('/', methods=['GET'])
@@ -53,22 +75,17 @@ def routine_invoice_processor():
 
 @app.route('/process_all', methods=['GET'])
 def process_all_emailed_invoices():
+    assert IS_DEBUG == 1
     creds = get_creds(OAUTH_FILE, PROD_TOKEN)
     gmail = get_gmail_service(creds)
     email = gmail.users().getProfile(userId='me').execute()['emailAddress']
     if email != PROD_EMAIL:
-        return 'Authorization Error', 200
+        return 'Authorization Error', 403
     drive = get_drive_service(creds)
     messages = get_invoices_gmail(gmail, GMAIL_INVOICE_LABEL)
     if not messages:
         raise Exception(f"No messages in folder! {GMAIL_INVOICE_LABEL} ")
-    msgs = {}
-    for m in messages:
-        if msgs.get(m['threadId']):
-            msgs[m['threadId']].append(m['id'])
-        else:
-            msgs[m['threadId']] = [m['id']]
-    messages = [{'id': i[1][0], 'threadId': i[0]} for i in msgs.items()]
+    messages = prune_by_threadId(messages)
     log.info(f"Starting processing of {len(messages)}")
     good = process_msg_invoices(gmail, drive, messages, DRIVE_INVOICES_FOLDER)
     if good:
@@ -79,14 +96,18 @@ def process_all_emailed_invoices():
 
 @app.route('/process_routine', methods=['GET'])
 def routine_processor():
+    auth_error = verify_request()
+    if auth_error:
+        return auth_error
     days = 14
-    creds = get_creds(OAUTH_FILE, PROD_TOKEN)
+    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
     gmail = get_gmail_service(creds)
     email = gmail.users().getProfile(userId='me').execute()['emailAddress']
     if email != PROD_EMAIL:
         return 'Authorization Error', 200
     drive = get_drive_service(creds)
     messages = get_invoices_gmail(gmail, GMAIL_INVOICE_LABEL, days)
+    messages = prune_by_threadId(messages)
     good = process_msg_invoices(gmail, drive, messages, DRIVE_INVOICES_FOLDER)
     if good:
         return 'Success!', 200
@@ -114,6 +135,7 @@ def process_failed_invoices():
 
 @app.route('/debug_failed', methods=['GET', 'POST'])
 def process_fail_debug():
+    assert IS_DEBUG == 1
     animal_df = get_all_animals(get_login_data())
     animal_df.sort_values(by='DATEBROUGHTIN')
     animal_df['date_in'] = animal_df['DATEBROUGHTIN'].dt.date
@@ -139,6 +161,7 @@ def process_fail_debug():
 
 @app.route('/debug_routine', methods=['GET'])
 def test_process():
+    assert IS_DEBUG == 1
     creds = get_creds(OAUTH_FILE, TEST_TOKEN)
     gmail = get_gmail_service(creds)
     drive = get_drive_service(creds)
@@ -153,6 +176,7 @@ def test_process():
 
 @app.route('/debug', methods=['GET'])
 def run_local():
+    assert IS_DEBUG == 1
     logging.basicConfig(filename=LOG_FILE, level=logging.INFO)
     invoice_items = pd.DataFrame()
     errors = list()
@@ -199,6 +223,33 @@ def run_local():
     return "-- Finished -- ", 200
 
 
+@app.route('/test_basic_api', methods=['GET'])
+def test_apis():
+    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
+    gmail = get_gmail_service(creds)
+    drive = get_drive_service(creds)
+    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+
+    assert email == PROD_EMAIL
+    assert drive != None
+    return "Success! We can access data!", 200
+
+
+@app.route('/test_auth', methods=['GET'])
+def test_auth_with_apis():
+    auth_error = verify_request()
+    if auth_error:
+        return auth_error
+    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
+    gmail = get_gmail_service(creds)
+    drive = get_drive_service(creds)
+    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+
+    assert email == PROD_EMAIL
+    assert drive != None
+    return "Success! We can access data!", 200
+
+
 if __name__ == '__main__':
     app.secret_key = os.urandom(24)
     app.run(debug=True, host='0.0.0.0', port=8000)
@@ -222,3 +273,5 @@ if __name__ == '__main__':
 #     assert vp.parse("DA2PP (No Lepto) - Litter, 1st vacc") == Vaccine.DHPP
 #     assert vp.parse("Bordetella Oral - Adult Vaccine") == Vaccine.BORDETELLA
 #     assert vp.parse("Leptospirosis 4 vaccine") == Vaccine.LEPTOSPIROSIS
+# from gfuncs import get_creds, process_msg_invoices, get_drive_service, get_gmail_service, get_invoices_gmail, get_drive_folder, parse_failed_pdfs_from_drive, get_failed_pdfs
+# from constants import LOG_FILE, TEST_TOKEN, PROD_TOKEN, OAUTH_FILE, INVOICE_DIR, NON_INVOICES_DIR, TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL, PROD_EMAIL, SVC_ACCOUNT, get_login_data

@@ -6,6 +6,7 @@ import base64
 import pickle
 import os
 from flask import session
+from collections import defaultdict
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from googleapiclient.errors import HttpError
@@ -13,10 +14,12 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from google.cloud import secretmanager
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from invoices import get_parser
 from animal_getter import upload_dataframe_to_database, get_all_animals, match_animals
-from envstuff import get_login_data
+from constants import SVC_ACCOUNT
+from constants import get_login_data
 from datetime import datetime as dt
 from datetime import timedelta as td
 from typing import Union
@@ -38,7 +41,55 @@ GMAIL_DATE_ZONE = "%a, %d %b %Y %H:%M:%S %z (%Z)"
 INCOMPLETE_INVOICE = 'Label_5838368921937526589'
 COMPLETE_INVOICE = 'Label_342337121491929089'
 
-NON_INVOICE_REGEXES = r"statement|treatment|estimate|record"
+NON_INVOICE_REGEXES = r"statement|treatment|estimate|record|payment"
+
+
+def get_creds(client_id_file: str, token_file: str) -> Credentials:
+    """Returns google auth credentials with given id_file or stored token file"""
+    creds = None
+    if os.path.exists(token_file):
+        with open(token_file, 'rb') as token:
+            creds = pickle.load(token)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                client_id_file, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(token_file, 'wb') as token:
+            pickle.dump(creds, token)
+    return creds
+
+
+def get_secret(name, project) -> Credentials:
+    client = secretmanager.SecretManagerServiceClient.from_service_account_file(
+        SVC_ACCOUNT)
+    path = f"projects/{project}/secrets/{name}/versions/latest"
+    response = client.access_secret_version(name=path)
+    return pickle.loads(response.payload.data)
+
+
+def update_secret(name, project, value):
+    client = secretmanager.SecretManagerServiceClient.from_service_account_file(
+        SVC_ACCOUNT)
+
+    parent = f"projects/{project}/secrets/{name}"
+    client.add_secret_version(
+        parent=parent,
+        payload={"data": pickle.dumps(value)},
+    )
+
+
+def get_creds_secret(project, token_name):
+    creds = get_secret(token_name, project)
+
+    if not creds.valid or creds.expired:
+        creds.refresh(Request())
+        if creds.refresh_token:
+            update_secret(token_name, project, creds)
+    return creds
 
 
 def get_drive_service(creds=None):
@@ -96,25 +147,6 @@ def get_drive_folder(service, folder_name, parent_folder_id=None) -> str:
                  parent_folder_id}")
 
     return files[0].get('id')
-
-
-def get_creds(client_id_file: str, token_file: str) -> Credentials:
-    """Returns google auth credentials with given id_file or stored token file"""
-    creds = None
-    if os.path.exists(token_file):
-        with open(token_file, 'rb') as token:
-            creds = pickle.load(token)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                client_id_file, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(token_file, 'wb') as token:
-            pickle.dump(creds, token)
-    return creds
 
 
 def get_drive_folder_ids(drive):
@@ -185,6 +217,16 @@ def get_invoices_gmail(gmail, folder_name, days_ago: int = None):
         return None
 
 
+def prune_by_threadId(messages: list) -> list:
+    """Prunes messages belonging to the same conversation"""
+    assert len(messages) != 0
+    msgs = defaultdict(list)
+    for m in messages:
+        msgs[m['threadId']].append(m['id'])
+    messages = [{'id': v, 'threadId': k} for k, v in msgs.items()]
+    return messages
+
+
 def get_email_dates_sender(headers, sender: str, date: str) -> (str, str):
     formats = [GMAIL_DATE, GMAIL_DATE_ZONE]
     for header in headers:
@@ -205,7 +247,8 @@ def get_email_dates_sender(headers, sender: str, date: str) -> (str, str):
     return sender, date
 
 
-def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False, from_label=INCOMPLETE_INVOICE, to_label=COMPLETE_INVOICE, is_debug: bool = False) -> (pd.DataFrame, pd.DataFrame):
+def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False, from_label=INCOMPLETE_INVOICE, to_label=COMPLETE_INVOICE, is_debug: bool = False) -> bool:
+    """Checks given messages for invoices, parses them, moves successfully found emails from FROM_LABEL to TO_LABEL, copies them and the parsed content to a drive folder, and uploads the data to a database"""
     animal_db = get_all_animals(get_login_data())
     stats = Statistics()
     stats.emails_count = len(messages)
@@ -402,14 +445,20 @@ class Statistics:
         s_table, f_table = "", ""
         non_table = ""
         if self.successes:
-            s_table = pd.DataFrame(self.successes, columns=[
-                                   'Successfully Processed']).to_html(index=False)
+            sframe = pd.DataFrame(self.successes, columns=['Successes'])
+            sframe.sort_values(by='Successes', inplace=True)
+            s_table = sframe.to_html(index=False)
         if self.fails:
-            f_table = pd.DataFrame(self.fails, columns=[
-                                   'Name Conflicts or Database Errors']).to_html(index=False)
+            fframe = pd.DataFrame(self.fails, columns=[
+                                  'Name Conflicts or Database Errors'])
+            fframe.sort_values(
+                by='Name Conflicts or Database Errors', inplace=True)
+            f_table = fframe.to_html(index=False)
         if self.non_invoices:
-            non_table = pd.DataFrame(self.non_invoices, columns=[
-                                     'Non-Invoices in Invoice Folder']).to_html(index=False)
+            nonframe = pd.DataFrame(
+                self.non_invoices, columns=['Non-Invoices'])
+            nonframe.sort_values(by='Non-Invoices', inplace=True)
+            non_table = nonframe.to_html(index=False)
 
         return f"""
         <h1>[Invoice Processor]</h1><br>

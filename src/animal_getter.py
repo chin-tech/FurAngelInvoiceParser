@@ -2,7 +2,7 @@ import pandas as pd
 from io import StringIO
 from datetime import timedelta as td
 from datetime import datetime as dt
-from envstuff import get_login_data
+from constants import get_login_data
 import re
 import requests
 import logging
