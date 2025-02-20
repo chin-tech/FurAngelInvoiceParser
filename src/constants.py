@@ -5,7 +5,7 @@ import os
 import json
 load_dotenv()
 
-IS_DEBUG = os.environ.get("DEBUG_STATUS")
+IS_DEBUG = int(os.environ.get("DEBUG_STATUS"))
 
 PROJECT_ID = os.environ.get("PROJECT_ID")
 SVC_ACCOUNT = os.environ.get("SERVICE_ACCOUNT_FILE")
@@ -37,6 +37,7 @@ DATE_MDYYYY = "%m-%d-%Y"
 DATA_DIR = Path("../data/")
 INVOICE_DIR = Path("../data/invoices/")
 NON_INVOICES_DIR = Path("../data/non_invoices/")
+UNPROCESSED_DIR = Path("../data/invoices/unprocessed_invoices")
 
 if Path(SVC_ACCOUNT).exists():
     with open(SVC_ACCOUNT, 'r') as f:

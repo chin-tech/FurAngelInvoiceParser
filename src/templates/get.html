@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Retry Invoices</title>
+  <link type="text/css" href="/static/styles.css" rel="stylesheet">
+</head>
+<body>
+  <div class="container mx-auto p-4">
+            <img src="static/foundation.png" alt="Furangel Image" style="width:500px; height:500px; margin-left: auto; margin-right: auto;">
+    <h1 class="text-2xl font-bold mb-4" style="margin-top: 10px">Invoice Processer: Failed Invoices</h1>
+    <form method="POST">
+      {% for fail_invoice, possible_animals in data_to_show %}
+        <div class="card bg-base-300 rounded-box p-4 mb-4">
+          <h2 class="text-xl font-semibold">
+                        <button class="btn btn-sm mt-2" onclick="deleteTable(this)">X</button><br>
+                        {{ fail_invoice.name }} - <a class="link link-accent" href="{{ fail_invoice.link }}">{{ fail_invoice.invoice }}</a> - {{ fail_invoice.COSTDATE }}
+          </h2>
+          <table class="table w-full">
+            <thead>
+              <tr>
+                <th>Shelter Code</th>
+                <th>Animal Name</th>
+                <th>Date Brought In</th>
+                <th>Time on Shelter</th>
+                <th>Select</th>
+              </tr>
+            </thead>
+            <tbody id="animal-rows-{{ fail_invoice.Index }}">
+              {% for animal in possible_animals %}
+                <tr class="hover">
+                  <td>{{ animal.SHELTERCODE }}</td>
+                  <td>{{ animal.ANIMALNAME }}</td>
+                  <td>{{ animal.date_in }}</td>
+                  <td>{{ animal.last_day_on_shelter }}</td>
+                  <td>
+                    <input type="checkbox" name="{{ fail_invoice.Index }}" value="{{ animal.SHELTERCODE }}" class="checkbox">
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <button type="button" class="btn btn-sm mt-2" onclick="addAnimalRow({{ fail_invoice.Index }})">Add Animal</button>
+        </div>
+      {% endfor %}
+      <button type="submit" class="btn btn-primary">Retry Processing</button>
+    </form>
+  </div>
+
+  <script>
+    const animalData = {{ animal_df | safe }};  // Access the animal_df DataFrame
+
+    function deleteTable(button) {
+      const tableDiv = button.closest('.card');
+      tableDiv.remove();
+    }
+
+    function addAnimalRow(index) {
+      const animalRows = document.getElementById(`animal-rows-${index}`);
+      const newRow = animalRows.insertRow(-1);
+      newRow.classList.add("hover");
+
+      const animalCodeCell = newRow.insertCell();
+      const animalNameCell = newRow.insertCell();
+      const dateInCell = newRow.insertCell();
+      const timeOnShelterCell = newRow.insertCell();
+      const selectCell = newRow.insertCell();
+
+      const animalNameInput = document.createElement('input');
+      animalNameInput.type = 'text';
+      let i = 1;
+        let suffix = index + '_' + i;
+      let newAnimalName = 'new_animal_' + suffix;
+        while (document.querySelector(`[name="${newAnimalName}"]`)) {
+            suffix = index + '_' + i;
+            newAnimalName = 'new_animal_' + suffix;
+            i++;
+        }
+      animalNameInput.name = newAnimalName;
+      animalNameInput.classList.add('input', 'input-bordered', 'w-full');
+        console.log(animalNameInput);
+      animalNameInput.addEventListener('input', function() {
+        const inputValue = this.value.toLowerCase();
+        const suggestions = animalData.filter(animal => animal.ANIMALNAME.toLowerCase().includes(inputValue));
+        showSuggestions(this, suggestions, suffix);
+      });
+      animalNameCell.appendChild(animalNameInput);
+
+      animalCodeCell.innerHTML = '<input type="text" name="new_code_' + suffix +'" class="input input-bordered w-full" disabled>';
+      dateInCell.innerHTML = '<input type="text" name="new_date_' + suffix +'"  class="input input-bordered w-full" disabled>';
+      timeOnShelterCell.innerHTML = '<input type="text" name="new_time_' + suffix + '" class="input input-bordered w-full" disabled>';
+      selectCell.innerHTML = '<input type="checkbox" name="' + suffix +'" value="new" class="checkbox" checked="checked"> ';
+
+      // Add delete button
+      selectCell.addEventListener("click", () => {
+        animalRows.removeChild(newRow)
+      });
+    }
+
+    function showSuggestions(inputField, suggestions, index) {
+      const suggestionsDiv = document.getElementById(`suggestions-${index}`);
+      if (suggestionsDiv) {
+        suggestionsDiv.innerHTML = ''; // Clear previous suggestions
+      } else {
+        const suggestionsDiv = document.createElement('div');
+        suggestionsDiv.id = `suggestions-${index}`;
+        suggestionsDiv.classList.add('suggestions');
+        inputField.parentNode.appendChild(suggestionsDiv);
+      }
+
+      suggestions.forEach(suggestion => {
+        const suggestionButton = document.createElement('button');
+        suggestionButton.type = 'button';
+        suggestionButton.classList.add('btn');
+        suggestionButton.classList.add('btn-sm');
+        suggestionButton.textContent = suggestion.ANIMALNAME;
+        suggestionButton.addEventListener('click', () => {
+          inputField.value = suggestion.ANIMALNAME;
+          const codeInput = document.getElementsByName('new_code_' + index);
+          const dateInput = document.getElementsByName('new_date_' + index);
+          const timeInput = document.getElementsByName('new_time_' + index);
+          codeInput[0].value = suggestion.SHELTERCODE;
+          dateInput[0].value = new Date(suggestion.date_in).toISOString().split('T')[0];
+          timeInput[0].value = new Date(suggestion.last_day_on_shelter).toISOString().split('T')[0];
+                console.log(codeInput);
+                console.log(dateInput);
+                console.log(timeInput);
+          // document.getElementsByName('new_date_' + index).value = suggestion.DATEBROUGHTIN;
+          // document.getElementsByName('new_time_' + index).value = suggestion.last_day_on_shelter;
+          // document.getElementsByName('new_code_' + index).value = suggestion.SHELTERCODE;
+          suggestionsDiv.innerHTML = ''; // Clear suggestions after selection
+        });
+        suggestionsDiv.appendChild(suggestionButton);
+      });
+    }
+  </script>
+</body>
+</html>

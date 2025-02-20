@@ -39,7 +39,7 @@ def get_all_animals(login_data: dict) -> pd.DataFrame:
         print(f"[Unexpected Error]: {e}")
 
 
-def upload_dataframe_to_database(df: pd.DataFrame, is_debug: bool = False):
+def upload_dataframe_to_database(df: pd.DataFrame, is_debug: bool = False) -> bool:
     login_data = get_login_data()
     try:
         session = requests.Session()
@@ -78,7 +78,7 @@ def prep_animal_df(df: pd.DataFrame, date_col: str, days_col: str, name_col: str
 
 
 def get_probable_matches(animal: str, df: pd.DataFrame, date: dt = None) -> pd.DataFrame:
-    animal = re.sub(r"['\"]", '', animal.lower())
+    animal = re.sub(r"[?'\"]", '', animal.lower())
     pattern = r'\b' + r'\b|\b'.join(animal.split()) + r'\b'
     of = df
     if date:

@@ -55,7 +55,7 @@ class InvoiceParser(Protocol):
     clinic_abrv = ""
     invoice_pattern = r"Invoice:\s*?(\d+)"
     invoice_date_pattern = r"Printed:\s*?(\d{2}-\d{2}-\d{2})"
-    dog_name_pattern = r"^\d{2}-\d{2}-d{2}\s+([A-Z].+?)  \s+?\d"
+    dog_name_pattern = r"^\d{2}-\d{2}-\d{2}\s+([A-Z].+?)  \s+?\d"
     charges_dog_pattern = ""
     price_pattern = r"(\d+\.\d{2})"
     charges_pattern = ""
@@ -70,9 +70,7 @@ class InvoiceParser(Protocol):
         self.text = txt
         self.invoice = invoice_path
         self.name = invoice_path.name
-        self.good = pd.DataFrame()
-        self.bad = pd.DataFrame()
-        self.success_dir = INVOICE_DIR / Path(self.clinic_abrv)
+        self.success_dir = INVOICE_DIR / Path(f"{self.clinic_abrv}_completed")
         self.fail_dir = INVOICE_DIR / Path(f"{self.clinic_abrv}_incomplete")
         self.drive_completed = f"{self.clinic_abrv}_completed"
         self.drive_incomplete = f"{self.clinic_abrv}_incomplete"
@@ -96,7 +94,11 @@ class InvoiceParser(Protocol):
         return sections
 
     def get_dog_names(self) -> list[str]:
-        names = re.findall(self.dog_name_pattern, self.text, re.M)
+        try:
+            names = re.findall(self.dog_name_pattern, self.text, re.M)
+        except Exception as e:
+            log.error(
+                f"{self.name} - get_dog_names | {self.dog_name_pattern} | {e}")
         if not names:
             raise ValueError(
                 f"{self.name}: {self.clinic_abrv} | No Dog Names!")
@@ -148,58 +150,65 @@ class InvoiceParser(Protocol):
             return None
         return match.group(1)
 
-    def get_animal_name_charge(self, txt: str, curr_name: str) -> str:
+    def get_animal_name_charge(self, txt: str):
         if self.charges_dog_pattern:
-            match = re.search(self.charges_date_pattern, txt)
+            try:
+                match = re.search(self.charges_dog_pattern, txt)
+            except Exception as e:
+                log.error(
+                    f"{self.name} - get_animal_name_charge | {self.dog_name_pattern} | {e}")
             if not match:
-                return curr_name
+                return
             else:
-                return match.group(1)
-        return curr_name
+                self.curr_dog = match.group(1)
+                return
+        return
 
     def finish(self, filename: str, items: dict):
         self.items = pd.DataFrame(items)
         self.name = filename
-        if not self.bad.empty:
-            self.local_dir = self.fail_dir
-            self.drive_dir = self.drive_incomplete
-        else:
-            self.local_dir = self.success_dir
-            self.drive_dir = self.drive_completed
+        # if not self.bad.empty:
+        #     self.local_dir = self.fail_dir
+        #     self.drive_dir = self.drive_incomplete
+        # else:
+        #     self.local_dir = self.success_dir
+        #     self.drive_dir = self.drive_completed
 
-    def parse_item(self, item: str, id: str, dog_name: str) -> dict:
+    def parse_item(self, item: str) -> dict:
         item = item.lower()
         charges = {}
         self.charge_date = self.get_date(
             item) if self.get_date(item) else self.charge_date
+        self.get_animal_name_charge(item)
         date = self.charge_date
         price = self.get_price(item)
         charge = self.get_charge(item)
         if not charge and price <= 0:
             return None
         charges['COSTDATE'] = date.strftime(DATE_M_D_Y)
-        charges['COSTDESCRIPTION'] = f"[{self.clinic} - {id} - {date.date()}] "
+        charges['COSTDESCRIPTION'] = f"[{
+            self.clinic} - {self.id} - {self.invoiced_date.date()}] "
         charges['COSTAMOUNT'] = price
-        charges['ANIMALNAME'] = self.get_animal_name_charge(item, dog_name)
+        charges['ANIMALNAME'] = self.curr_dog
         return get_description(charge, charges, date)
 
     def parse_invoice(self) -> None:
         """Parse the self.text of the InvoiceParser. Sets the self.name, self.good, self.bad and self.local_dir"""
         items = []
         dog_names = self.get_dog_names()
-        invoice_id = self.get_invoice_id()
-        invoice_datetime = self.get_invoiced_date()
+        self.id = self.get_invoice_id()
+        self.invoiced_date = self.get_invoiced_date()
         sections = self.get_itemized_section()
         new_name = f"{self.clinic_abrv}_{
-            invoice_id}_{invoice_datetime.date()}.pdf"
-        self.charge_date = invoice_datetime
+            self.id}_{self.invoiced_date.date()}.pdf"
+        self.charge_date = self.invoiced_date
         for index, section in enumerate(sections):
-            dog_name = dog_names[index]
+            self.curr_dog = dog_names[index]
             for i, lines in enumerate(section.splitlines()):
                 if i == 0 or len(lines) < 60:
                     continue
                 charges = self.parse_item(
-                    lines, invoice_id, dog_name)
+                    lines)
                 if not charges:
                     continue
                 items.append(charges)
@@ -212,7 +221,8 @@ class WaipioParser(InvoiceParser):
     charges_date_pattern = r"^(\d{2}-\d{2}-\d{2})"
     name_pattern = r"\d{2}-\d{2}-\d{2} ([a-z].+?) +\d{1,2}"
     charges_pattern = r"\s{2,}(?:\d+\.\d{1,2}|\d+)\s+?(\w.*?)\*"
-    dog_name_pattern = r"\d{2}-\d{2}-\d{2}\s+?([A-Z].*?)\s{2,}\d"
+    charges_dog_pattern = r"(?i)^\d{2}-\d{2}-\d{2}\s+((?!DIAGNOSIS)[A-Za-z].+?)  \s+?\d"
+    dog_name_pattern = r"(?i)\d{2}-\d{2}-\d{2}\s+?((?!DIAGNOSIS)[A-Z].*?)\s{2,}\d"
     itemized_begin_pattern = r"^\s+(Date.*)"
     itemized_end_pattern = r"payment"
 

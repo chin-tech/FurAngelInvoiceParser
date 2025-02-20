@@ -225,11 +225,13 @@ def prune_by_threadId(messages: list) -> list:
     msgs = defaultdict(list)
     for m in messages:
         msgs[m['threadId']].append(m['id'])
-    messages = [{'id': v, 'threadId': k} for k, v in msgs.items()]
+    messages = [{'id': v[0], 'threadId': k} for k, v in msgs.items()]
     return messages
 
 
-def get_email_dates_sender(headers, sender: str, date: str) -> (str, str):
+def get_email_dates_sender(headers) -> (str, str):
+    sender = "unknown_sender"
+    date = "1999-01-01"
     formats = [GMAIL_DATE, GMAIL_DATE_ZONE]
     for header in headers:
         if header['name'] == "Date":
@@ -268,10 +270,7 @@ def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False,
         parts = payload.get("parts", [])
 
         # Extract sender email
-        sender_email = "unknown_sender"
-        date_str = "1999-01-01"
-        sender_email, date_str = get_email_dates_sender(
-            headers, sender_email, date_str)
+        sender_email, date_str = get_email_dates_sender(headers)
 
         # Check for attachments
         for part in parts:
@@ -285,10 +284,6 @@ def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False,
                 userId='me', messageId=msg_id, id=attachment_id
             ).execute()
 
-            file_data = base64.urlsafe_b64decode(
-                attachment["data"].encode("UTF-8"))
-
-            invoice = io.BytesIO(file_data)
             # Construct filename with sender's email
             normalized_name = part['filename'].replace(' ', '_')
             if re.search(NON_INVOICE_REGEXES, normalized_name.lower()):
@@ -296,6 +291,11 @@ def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False,
                 continue
             filename = f"{date_str}_{sender_email}_{
                 normalized_name}"
+
+            file_data = base64.urlsafe_b64decode(
+                attachment["data"].encode("UTF-8"))
+            invoice = io.BytesIO(file_data)
+
             output_path = unprocessed_folder
             try:
                 parser = get_parser(
@@ -373,6 +373,27 @@ def upload_drive(drive, file_data: Union[pd.DataFrame, io.BytesIO], file_name: s
         return None
 
 
+def get_pdfs_in_drive(drive, parent_id):
+    try:
+        query = f"'{parent_id}' in parents and name contains 'completed'"
+        res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
+        incomplete_folders = res.get('files', [])
+
+        pdf_files = []
+        for folder in incomplete_folders:
+            folder_id = folder['id']
+
+            pdf_query = f"'{
+                folder_id}' in parents and mimeType='application/pdf'"
+            r = drive.files().list(q=pdf_query, spaces='drive',
+                                   fields='files(id,name,webViewLink)').execute()
+            pdfs = r.get('files', [])
+            pdf_files.extend(pdfs)
+        return pdf_files
+    except Exception as e:
+        log.error(f"Error: {e}")
+
+
 def get_failed_pdfs(drive, parent_id):
     """Retrieves all .PDFs in folder that in _incomplete folders"""
     try:
@@ -387,7 +408,7 @@ def get_failed_pdfs(drive, parent_id):
             pdf_query = f"'{
                 folder_id}' in parents and mimeType='application/pdf'"
             r = drive.files().list(q=pdf_query, spaces='drive',
-                                   fields='files(id,name)').execute()
+                                   fields='files(id,name,webViewLink)').execute()
             pdfs = r.get('files', [])
             pdf_files.extend(pdfs)
         return pdf_files
@@ -395,20 +416,40 @@ def get_failed_pdfs(drive, parent_id):
         log.error(f"Error: {e}")
 
 
-def drivepdf_to_file(drive, pdf_id) -> io.BytesIO:
+def get_failed_csv(drive, parent_id):
+    try:
+        query = f"'{
+            parent_id}' in parents and name contains '_failures' and mimeType='text/csv'"
+        res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
+        return res.get('files')[0]
+    except Exception as e:
+        print(f"Failed to grab failures, ironic huh? {e}")
+
+
+def drive_file_to_bytes(drive, file_id) -> io.BytesIO:
     """Reads a PDF from drive and returns a BytesIO object for manipulation"""
     try:
-        req = drive.service.files().get_media(fileId=pdf_id)
-        pdf = io.BytesIO()
-        downloader = MediaIoBaseDownload(pdf, req)
+        req = drive.files().get_media(fileId=file_id)
+        file = io.BytesIO()
+        downloader = MediaIoBaseDownload(file, req)
         done = False
         while not done:
             _, done = downloader.next_chunk()
-        pdf.seek(0)
-        return pdf
+        file.seek(0)
+        return file
     except Exception as e:
-        log.error(f"Error reading PDF: {e}")
+        log.error(f"Error reading file: {e}")
         return None
+
+
+def get_invoice_folders(drive, parent_id):
+    try:
+        q = f"'{
+            parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder'"
+        r = drive.files().list(q=q, spaces='drive', fields='files(id,name)').execute()
+        return r.get('files')
+    except Exception as e:
+        log.error(f"Could not retrieve drive folders: {e}")
 
 
 def parse_failed_pdfs_from_drive(drive, pdf_files, animals_db: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
@@ -416,7 +457,7 @@ def parse_failed_pdfs_from_drive(drive, pdf_files, animals_db: pd.DataFrame) -> 
     if not pdf_files:
         return items
     for pdf_file in pdf_files:
-        pdf = drivepdf_to_file(drive, pdf_file['id'])
+        pdf = drive_file_to_bytes(drive, pdf_file['id'])
         invoice_parser = get_parser(pdf, pdf_file['name'], True)
         invoice_parser.parse()
         items = pd.concat([items, invoice_parser.items])
@@ -424,6 +465,24 @@ def parse_failed_pdfs_from_drive(drive, pdf_files, animals_db: pd.DataFrame) -> 
     items = items[items['SHELTERCODE'] == 'ERROR_CODE'].copy()
 
     return items
+
+
+def batch_move_drive(drive, ids, old_parent_id, new_parent_id):
+    batch = drive.new_batch_http_request()
+    for file_id in ids:
+        batch.add(drive.files().update(
+            fileId=file_id,
+            addParents=new_parent_id,
+            removeParents=old_parent_id,
+        ))
+        batch.execute()
+
+
+def batch_delete_drive(drive, ids):
+    batch = drive.new_batch_http_request()
+    for id in ids:
+        batch.add(drive.files().delete(fileId=id))
+    batch.execute()
 
 
 def retry_failed(gmail, drive,):

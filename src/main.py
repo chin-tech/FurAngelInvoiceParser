@@ -4,6 +4,8 @@ import pandas as pd
 import os
 import logging
 import shutil
+import io
+from datetime import datetime as dt
 from pathlib import Path
 import google.auth.transport.requests
 from google.oauth2 import id_token
@@ -13,7 +15,7 @@ from rich import print
 from flask import Flask, request, redirect, url_for, session, render_template, jsonify
 from constants import LOG_FILE
 from constants import TEST_TOKEN, PROD_TOKEN, OAUTH_FILE
-from constants import INVOICE_DIR, NON_INVOICES_DIR
+from constants import INVOICE_DIR, NON_INVOICES_DIR, UNPROCESSED_DIR
 from constants import TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL
 from constants import PROD_EMAIL, SVC_ACCOUNT, PROJECT_ID, SECRET_NAME
 from constants import IS_DEBUG
@@ -21,10 +23,13 @@ from constants import get_login_data
 from gfuncs import get_creds, get_creds_secret
 from gfuncs import get_drive_service, get_gmail_service
 from gfuncs import get_invoices_gmail  # , get_drive_folder
-from gfuncs import process_msg_invoices, prune_by_threadId  # , get_failed_pdfs
+from gfuncs import process_msg_invoices, prune_by_threadId, get_failed_pdfs
+from gfuncs import get_pdfs_in_drive, get_drive_folder, get_failed_csv, drive_file_to_bytes
+from gfuncs import upload_drive, get_invoice_folders
+from web_process import show_failed_invoices, get_post_data, update_invoice_data
 # from gfuncs import parse_failed_pdfs_from_drive
 
-from animal_getter import get_all_animals, match_animals, get_probable_matches
+from animal_getter import get_all_animals, match_animals, get_probable_matches, upload_dataframe_to_database
 from invoices import get_parser
 
 
@@ -43,6 +48,16 @@ DRIVE_INVOICES_FOLDER = "VET_INVOICES"
 
 
 app = Flask(__name__)
+
+
+def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
+    cols = ['invoice', 'invoice_date']
+    fails[cols] = fails['COSTDESCRIPTION'].str.extract(
+        r" - (\d+) - (\d{4}-\d{2}-\d{2})")
+    pdfs[cols] = pdfs['name'].str.extract(r"_(\d+)_(\d{4}-\d{2}-\d{2})")
+    pdfs['cmp'] = pdfs['invoice'] + '_' + pdfs['invoice_date']
+    fails['cmp'] = fails['invoice'] + '_' + fails['invoice_date']
+    return fails, pdfs
 
 
 def verify_request():
@@ -120,46 +135,103 @@ def routine_processor():
 
 @app.route('/failed_invoices', methods=['GET', 'POST'])
 def process_failed_invoices():
-    return "Currently Unimplemented....", 200
-    # TODO: Implement user derived failure fixing....
+    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
+    gmail = get_gmail_service(creds)
+    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+    if email != PROD_EMAIL:
+        return 'Authorization Error', 403
+    drive = get_drive_service(creds)
+    parent_folder = get_drive_folder(drive, 'VET_INVOICES')
+    pdfs = pd.DataFrame(get_failed_pdfs(drive, parent_folder))
+    animal_df = get_all_animals(get_login_data())
+    animal_df.sort_values(by='DATEBROUGHTIN')
+    animal_df['date_in'] = animal_df['DATEBROUGHTIN'].dt.date
+    animal_df['last_day_on_shelter'] = animal_df['end_date'].dt.date
+    failed_invoice = get_failed_csv(drive, 'VET_INVOICES')
+    failed_bytes = drive_file_to_bytes(drive, failed_invoice)
+    f_frame = pd.read_csv(failed_bytes)
+    f_frame, pdfs = add_invoices_col(f_frame, pdfs)
 
-    # creds = get_creds(OAUTH_FILE, TEST_TOKEN)
-    # gmail = get_gmail_service(creds)
-    # drive = get_drive_service(creds)
-    # parent_folder = get_drive_folder(drive, INVOICE_DIR)
-    # animals_db = get_all_animals(get_login_data())
-    # if request.method == 'GET':
-    #     pdfs = get_failed_pdfs(drive, parent_folder)
-    #     failed_items = parse_failed_pdfs_from_drive(drive, pdfs, animals_db)
-    #
-    #     fail_display_cols = ['COSTDESCRIPTION', 'name']
-    #     success_display_cols = ['ANIMALNAME', 'DATEBROUGHTIN', 'TIMEONSHELTER']
+    if request.method == 'GET':
+        return show_failed_invoices(f_frame, pdfs, animal_df)
+
+    if request.method == 'POST':
+        post_df = get_post_data(request, animal_df)
+        updated = update_invoice_data(f_frame, post_df)
+        good_data_condition = updated['ANIMALCODE'] != 'ERROR_CODE'
+        to_upload = updated[good_data_condition]
+        if to_upload.empty:
+            return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
+
+        to_fails = updated[~good_data_condition]
+        error_name = f"{dt.now().date()}_failures.csv"
+        new_id = upload_drive(drive, to_fails, error_name, [
+                              parent_folder], 'text/csv')
+        corrected_id = upload_drive(drive, to_upload, f'{dt.now(
+        ).date()}_corrections.csv', [parent_folder], 'text/csv')
+        success = upload_dataframe_to_database(to_upload, True)
+        if success:
+            if new_id:
+                drive.files().delete(fileId=failed_invoice.get('id'))
+            batch = drive.new_batch_http_request()
+            folders = pd.DataFrame(get_invoice_folders(drive, parent_folder))
+            completed_pdfs = to_upload['cmp'].unique()
+            incomplete_pdfs = to_fails['cmp'].unique()
+            completed_invoices = pdfs[
+                (pdfs['cmp'].isin(completed_pdfs)) &
+                (~pdfs['cmp'].isin(incomplete_pdfs))
+            ]
+            for pdf in completed_invoices.itertuples():
+                invoice_type = pdf.name.split('_')[0]
+                incomplete_folder = folders[folders['name'] == f"{
+                    invoice_type}_incomplete"]['id'].values[0]
+                complete_folder = folders[folders['name'] == f"{
+                    invoice_type}completed"]['id'].values[0]
+                batch.add(drive.files().update(
+                    fileId=pdf.id,
+                    addParents=complete_folder,
+                    removeParents=incomplete_folder,
+                ))
+            batch.execute()
+
+        return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
+
+
+def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
+    cols = ['invoice', 'invoice_date']
+    fails[cols] = fails['COSTDESCRIPTION'].str.extract(
+        r" - (\d+) - (\d{4}-\d{2}-\d{2})")
+    pdfs[cols] = pdfs['name'].str.extract(r"_(\d+)_(\d{4}-\d{2}-\d{2})")
+    pdfs['cmp'] = pdfs['invoice'] + '_' + pdfs['invoice_date']
+    fails['cmp'] = fails['invoice'] + '_' + fails['invoice_date']
+    return fails, pdfs
 
 
 @app.route('/debug_failed', methods=['GET', 'POST'])
 def process_fail_debug():
     assert IS_DEBUG == 1
+    creds = get_creds(OAUTH_FILE, PROD_TOKEN)
+    drive = get_drive_service(creds)
+    parent_folder = get_drive_folder(drive, 'VET_INVOICES')
+    pdfs = pd.DataFrame(get_failed_pdfs(drive, parent_folder))
+    assert pdfs.empty == False
     animal_df = get_all_animals(get_login_data())
     animal_df.sort_values(by='DATEBROUGHTIN')
     animal_df['date_in'] = animal_df['DATEBROUGHTIN'].dt.date
     animal_df['last_day_on_shelter'] = animal_df['end_date'].dt.date
+    bads = pd.read_csv('../data/completed_csvs/errata.csv')
+    bads, pdfs = add_invoices_col(bads, pdfs)
+
     if request.method == 'GET':
-        bads = pd.read_csv('data/completed_csvs/errata.csv')
-        bads['date'] = pd.to_datetime(bads['COSTDATE'])
-        bads['name'] = bads['ANIMALNAME']
-        bads['invoice'] = bads['COSTDESCRIPTION'].str.extract(
-            r'- (\d+) -')
-        bads['date'] = pd.to_datetime(bads['COSTDATE'])
-        bads.sort_values(by='date', inplace=True)
-        fails = bads[['name', 'invoice', 'COSTDATE', 'date']
-                     ].drop_duplicates(['name', 'invoice'])
-        data_to_show = list()
-        for row in fails.itertuples():
-            possible_animals = get_probable_matches(
-                row.name, animal_df, row.date)
-            data_to_show.append(
-                (row, possible_animals.to_dict(orient='records')))
-        return render_template('tmpl.html', data_to_show=data_to_show)
+        return show_failed_invoices(bads, pdfs, animal_df)
+
+    if request.method == 'POST':
+        post_df = get_post_data(request, animal_df)
+        post_df.to_csv('../data/post_data.csv', index=False)
+        updated = update_invoice_data(bads, post_df)
+        updated.to_csv("../data/completed_csvs/updated_errata.csv")
+
+        return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
 
 
 @app.route('/debug_routine', methods=['GET'])
@@ -182,8 +254,12 @@ def run_local():
     assert IS_DEBUG == 1
     logging.basicConfig(filename=LOG_FILE, level=logging.INFO)
     invoice_items = pd.DataFrame()
+    good, bad = pd.DataFrame(), pd.DataFrame()
     errors = list()
     print("---------")
+    NON_INVOICES_DIR.mkdir(exist_ok=True)
+    UNPROCESSED_DIR.mkdir(exist_ok=True)
+
     invoices = list(INVOICE_DIR.rglob("*.*"))
     # ipath = INVOICE_DIR / Path("ezyvet_invoices")
     # invoices = list(ipath.rglob("*.*"))
@@ -204,10 +280,22 @@ def run_local():
             # text = extract_text(invoice)
             parser = get_parser(invoice)
             parser.parse_invoice()
-            invoice_items = pd.concat([invoice_items, parser.items])
+            matched = match_animals(parser.items, db_animals)
+            condition = matched['ANIMALCODE'] != 'ERROR_CODE'
+            if matched[condition].shape[0] == parser.items.shape[0]:
+                shutil.move(invoice, parser.success_dir / Path(parser.name))
+            else:
+                shutil.move(invoice, parser.fail_dir / Path(parser.name))
+            good = pd.concat([good, matched[condition]])
+            bad = pd.concat([bad, matched[~condition]])
             invoice_count += 1
         except Exception as e:
             errors.append(invoice)
+            try:
+                shutil.move(invoice, UNPROCESSED_DIR)
+            except Exception as e:
+                print(f"File {invoice} exists there already")
+                continue
             print(f"\t[ERROR]: {e}")
     print("--------------")
     print(f"------[ERRORS: {len(errors)}]-------")
@@ -216,12 +304,8 @@ def run_local():
     print("____________________")
     print(f"Successfully Processed: {invoice_count} invoices")
     output_path = Path("../data/completed_csvs")
-    if invoice_items.empty:
-        raise ValueError("WE MADE A MISTAKE!")
-    invoice_items = match_animals(invoice_items, db_animals)
-    good = invoice_items['ANIMALCODE'] != 'ERROR_CODE'
-    invoice_items[good].to_csv(output_path / 'good_parse.csv', index=False)
-    invoice_items[~good].to_csv(output_path / 'errata.csv', index=False)
+    good.to_csv(output_path / 'good_parse.csv', index=False)
+    bad.to_csv(output_path / 'errata.csv', index=False)
     log.info('-- END INVOICE PARSING --')
     return "-- Finished -- ", 200
 
