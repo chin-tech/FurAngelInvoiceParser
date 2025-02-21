@@ -50,6 +50,7 @@ GLOBAL_CREDS = ""
 
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)
 
 
 def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
