@@ -18,6 +18,7 @@ from constants import TEST_TOKEN, PROD_TOKEN, OAUTH_FILE
 from constants import INVOICE_DIR, NON_INVOICES_DIR, UNPROCESSED_DIR
 from constants import TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL
 from constants import PROD_EMAIL, SVC_ACCOUNT, PROJECT_ID, SECRET_NAME
+from constants import REDIRECT_URI
 from constants import IS_DEBUG
 from constants import get_login_data
 from gfuncs import get_creds, get_creds_secret
@@ -31,10 +32,6 @@ from web_process import show_failed_invoices, get_post_data, update_invoice_data
 
 from animal_getter import get_all_animals, match_animals, get_probable_matches, upload_dataframe_to_database
 from invoices import get_parser
-
-
-# Redirect URI (must match the one in your Google Cloud Console)
-REDIRECT_URI = 'http://localhost:8080/callback'  # Adjust if needed
 
 
 log = logging.getLogger(__name__)
@@ -141,7 +138,8 @@ def oauth_callback():
     state = session.get('state')
 
     flow = Flow.from_client_config(OAUTH_FILE, scopes=SCOPES, state=state)
-    flow.redirect_uri = url_for('oauth_callback', _external=True)
+    # url_for('oauth_callback', _external=True)
+    flow.redirect_uri = REDIRECT_URI + '/oauth_callback'
 
     auth_response = request.url
     flow.fetch_token(authorization_response=auth_response)
@@ -156,7 +154,8 @@ def process_failed_invoices():
     global GLOBAL_CREDS
     # creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
     if not GLOBAL_CREDS:
-        redirect_uri = url_for('oauth_callback', _external=True)
+        # url_for('oauth_callback', _external=True)
+        redirect_uri = REDIRECT_URI + '/oauth_callback'
         creds = get_creds(OAUTH_FILE, "", True, redirect_uri)
         if isinstance(creds, Response):
             return creds

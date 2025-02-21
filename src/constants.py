@@ -13,6 +13,7 @@ SECRET_NAME = os.environ.get("SECRET_NAME")
 DB_NAME = os.environ.get("DB_NAME")
 DB_USERNAME = os.environ.get("DB_USER")
 DB_PASS = os.environ.get("DB_PASS")
+REDIRECT_URI = os.environ.get('REDIRECT_URL')
 
 # EMAILS
 PROD_EMAIL = os.environ.get("PROD_EMAIL")
