@@ -22,7 +22,7 @@ TEST_EMAIL = os.environ.get("TEST_EMAIL")
 LOG_FILE = Path(os.environ.get("LOG_FILE"))
 TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))
 PROD_TOKEN = Path(os.environ.get("PROD_TOKEN"))
-OAUTH_FILE = Path(os.environ.get("AUTH_FILE"))
+OAUTH_FILE = os.environ.get("AUTH_FILE")
 
 # GMAIL LABELS
 TEST_LABEL = 'Label_8306108300123845242'
