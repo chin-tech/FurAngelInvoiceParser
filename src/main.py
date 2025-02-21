@@ -28,6 +28,7 @@ from gfuncs import process_msg_invoices, prune_by_threadId, get_failed_pdfs
 from gfuncs import get_pdfs_in_drive, get_drive_folder, get_failed_csv, drive_file_to_bytes
 from gfuncs import upload_drive, get_invoice_folders, SCOPES
 from web_process import show_failed_invoices, get_post_data, update_invoice_data
+from werkzeug.middleware.proxy_fix import ProxyFix
 # from gfuncs import parse_failed_pdfs_from_drive
 
 from animal_getter import get_all_animals, match_animals, get_probable_matches, upload_dataframe_to_database
@@ -48,6 +49,7 @@ GLOBAL_CREDS = ""
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 
 def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
