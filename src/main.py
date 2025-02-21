@@ -12,7 +12,7 @@ from google.oauth2 import id_token
 # import google.ouath2.id_token
 from google_auth_oauthlib.flow import Flow
 from rich import print
-from flask import Flask, request, redirect, url_for, session, render_template, jsonify
+from flask import Flask, request, redirect, url_for, session, render_template, jsonify, Response
 from constants import LOG_FILE
 from constants import TEST_TOKEN, PROD_TOKEN, OAUTH_FILE
 from constants import INVOICE_DIR, NON_INVOICES_DIR, UNPROCESSED_DIR
@@ -25,7 +25,7 @@ from gfuncs import get_drive_service, get_gmail_service
 from gfuncs import get_invoices_gmail  # , get_drive_folder
 from gfuncs import process_msg_invoices, prune_by_threadId, get_failed_pdfs
 from gfuncs import get_pdfs_in_drive, get_drive_folder, get_failed_csv, drive_file_to_bytes
-from gfuncs import upload_drive, get_invoice_folders
+from gfuncs import upload_drive, get_invoice_folders, SCOPES
 from web_process import show_failed_invoices, get_post_data, update_invoice_data
 # from gfuncs import parse_failed_pdfs_from_drive
 
@@ -45,6 +45,8 @@ GMAIL_INVOICE_LABEL = "Invoices/Vet invoice"
 
 # Drive Constants #
 DRIVE_INVOICES_FOLDER = "VET_INVOICES"
+
+GLOBAL_CREDS = ""
 
 
 app = Flask(__name__)
@@ -133,10 +135,31 @@ def routine_processor():
         return 'Something Failed', 404
 
 
+@app.route('/oauth_callback')
+def oauth_callback():
+    state = session.get('state')
+
+    flow = Flow.from_client_config(OAUTH_FILE, scopes=SCOPES, state=state)
+    flow.redirect_uri = url_for('oauth_callback', _external=True)
+
+    auth_response = request.url
+    flow.fetch_token(authorization_response=auth_response)
+
+    global GLOBAL_CREDS
+    GLOBAL_CREDS = flow.credentials
+    return redirect(url_for('process_failed_invoices'))
+
+
 @app.route('/failed_invoices', methods=['GET', 'POST'])
 def process_failed_invoices():
+    global GLOBAL_CREDS
     # creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
-    creds = get_creds(OAUTH_FILE, "", True)
+    if not GLOBAL_CREDS:
+        redirect_uri = url_for('oauth_callback', _external=True)
+        creds = get_creds(OAUTH_FILE, "", True, redirect_uri)
+        if isinstance(creds, Response):
+            return creds
+    creds = GLOBAL_CREDS
     gmail = get_gmail_service(creds)
     email = gmail.users().getProfile(userId='me').execute()['emailAddress']
     if email != PROD_EMAIL:
@@ -197,6 +220,7 @@ def process_failed_invoices():
                     removeParents=incomplete_folder,
                 ))
             batch.execute()
+            GLOBAL_CREDS = None
 
         return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
 

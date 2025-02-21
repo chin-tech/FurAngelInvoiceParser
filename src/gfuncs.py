@@ -6,7 +6,7 @@ import base64
 import pickle
 import os
 import json
-from flask import session
+from flask import session, request, redirect
 from pathlib import Path
 from collections import defaultdict
 from email.mime.text import MIMEText
@@ -46,7 +46,7 @@ COMPLETE_INVOICE = 'Label_342337121491929089'
 NON_INVOICE_REGEXES = r"statement|treatment|estimate|record|payment"
 
 
-def get_creds(client_id_file: str, token_file: str, secure: bool = False) -> Credentials:
+def get_creds(client_id_file: str, token_file: str, secure: bool = False, redirect_url: request = None) -> Credentials:
     """Returns google auth credentials with given id_file or stored token file"""
     creds = None
     if not token_file:
@@ -61,9 +61,24 @@ def get_creds(client_id_file: str, token_file: str, secure: bool = False) -> Cre
             flow = InstalledAppFlow.from_client_config(
                 client_id_file, SCOPES
             )
+            if redirect_url:
+                flow.redirect_uri = redirect_url
+
+            auth_url, state = flow.authorization_url(
+                access_type='offline',
+                include_granted_scopes='true',
+            )
+            session['state'] = state
             # flow = InstalledAppFlow.from_client_secrets_file(
             #     client_id_file, SCOPES)
-            creds = flow.run_local_server(port=0)
+            return redirect(auth_url)
+            # creds = flow.run_local_server(port=0)
+            # auth_url, state = flow.authorization_url(
+            #     access_type='offline',
+            #     include_granted_scopes='true',
+            #     redirect_uri=[redirect_url.base_url]
+            # )
+            # return redirect(auth_url)
         if not secure:
             with open(token_file, 'wb') as token:
                 pickle.dump(creds, token)
