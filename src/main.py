@@ -141,7 +141,9 @@ def oauth_callback():
     # url_for('oauth_callback', _external=True)
     flow.redirect_uri = REDIRECT_URI + '/oauth_callback'
 
+    print(flow.redirect_uri)
     auth_response = request.url
+    print(auth_response)
     flow.fetch_token(authorization_response=auth_response)
 
     global GLOBAL_CREDS
