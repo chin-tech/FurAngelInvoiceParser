@@ -46,22 +46,27 @@ COMPLETE_INVOICE = 'Label_342337121491929089'
 NON_INVOICE_REGEXES = r"statement|treatment|estimate|record|payment"
 
 
-def get_creds(client_id_file: str, token_file: str) -> Credentials:
+def get_creds(client_id_file: str, token_file: str, secure: bool = False) -> Credentials:
     """Returns google auth credentials with given id_file or stored token file"""
     creds = None
-    if os.path.exists(token_file):
-        with open(token_file, 'rb') as token:
-            creds = pickle.load(token)
+    if not token_file:
+        if os.path.exists(token_file):
+            with open(token_file, 'rb') as token:
+                creds = pickle.load(token)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                client_id_file, SCOPES)
+            flow = InstalledAppFlow.from_client_config(
+                client_id_file, SCOPES
+            )
+            # flow = InstalledAppFlow.from_client_secrets_file(
+            #     client_id_file, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open(token_file, 'wb') as token:
-            pickle.dump(creds, token)
+        if not secure:
+            with open(token_file, 'wb') as token:
+                pickle.dump(creds, token)
     return creds
 
 

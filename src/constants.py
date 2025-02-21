@@ -45,6 +45,12 @@ if Path(SVC_ACCOUNT).exists():
 else:
     SVC_ACCOUNT = json.loads(SVC_ACCOUNT)
 
+if Path(OAUTH_FILE).exists():
+    with open(OAUTH_FILE, 'r') as f:
+        OAUTH_FILE = json.load(f)
+else:
+    OAUTH_FILE = json.loads(OAUTH_FILE)
+
 
 def get_login_data() -> dict:
     return {

@@ -135,7 +135,8 @@ def routine_processor():
 
 @app.route('/failed_invoices', methods=['GET', 'POST'])
 def process_failed_invoices():
-    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
+    # creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
+    creds = get_creds(OAUTH_FILE, "", True)
     gmail = get_gmail_service(creds)
     email = gmail.users().getProfile(userId='me').execute()['emailAddress']
     if email != PROD_EMAIL:
@@ -147,8 +148,10 @@ def process_failed_invoices():
     animal_df.sort_values(by='DATEBROUGHTIN')
     animal_df['date_in'] = animal_df['DATEBROUGHTIN'].dt.date
     animal_df['last_day_on_shelter'] = animal_df['end_date'].dt.date
-    failed_invoice = get_failed_csv(drive, 'VET_INVOICES')
-    failed_bytes = drive_file_to_bytes(drive, failed_invoice)
+    failed_invoice = get_failed_csv(drive, parent_folder)
+    assert failed_invoice != None
+    failed_bytes = drive_file_to_bytes(drive, failed_invoice.get('id'))
+    assert failed_bytes != None
     f_frame = pd.read_csv(failed_bytes)
     f_frame, pdfs = add_invoices_col(f_frame, pdfs)
 
@@ -164,15 +167,16 @@ def process_failed_invoices():
             return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
 
         to_fails = updated[~good_data_condition]
-        error_name = f"{dt.now().date()}_failures.csv"
-        new_id = upload_drive(drive, to_fails, error_name, [
+        error_name = f"{dt.now().date()}-failures.csv"
+        new_id = upload_drive(drive, to_fails.drop(['invoice', 'invoice_date', 'cmp'], axis=1), error_name, [
                               parent_folder], 'text/csv')
         corrected_id = upload_drive(drive, to_upload, f'{dt.now(
         ).date()}_corrections.csv', [parent_folder], 'text/csv')
-        success = upload_dataframe_to_database(to_upload, True)
+        success = upload_dataframe_to_database(to_upload.drop(
+            ['invoice', 'invoice_date', 'cmp'], axis=1), False)
         if success:
             if new_id:
-                drive.files().delete(fileId=failed_invoice.get('id'))
+                drive.files().delete(fileId=failed_invoice.get('id')).execute()
             batch = drive.new_batch_http_request()
             folders = pd.DataFrame(get_invoice_folders(drive, parent_folder))
             completed_pdfs = to_upload['cmp'].unique()
@@ -186,7 +190,7 @@ def process_failed_invoices():
                 incomplete_folder = folders[folders['name'] == f"{
                     invoice_type}_incomplete"]['id'].values[0]
                 complete_folder = folders[folders['name'] == f"{
-                    invoice_type}completed"]['id'].values[0]
+                    invoice_type}_completed"]['id'].values[0]
                 batch.add(drive.files().update(
                     fileId=pdf.id,
                     addParents=complete_folder,
