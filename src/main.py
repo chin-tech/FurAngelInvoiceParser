@@ -135,7 +135,7 @@ def oauth_callback():
 
 
 @app.route('/retry_failed', methods=['GET', 'POST'])
-def process_failed2():
+def process_failed_invoices():
     global GLOBAL_CREDS
     print(REDIRECT_URI)
     google = Google()
