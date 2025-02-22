@@ -153,6 +153,36 @@ class Google:
 
         return files[0].get('id')
 
+    def update_csv_in_drive(self, file_id: str, file_data: pd.DataFrame, file_name: str, parents: list[str],  mimetype: str) -> str:
+        """Updates drive file with specified ID with the provided arguments """
+        old_data = self.drive_file_to_bytes(file_id)
+        old_data.seek(0)
+        old_bytes = old_data.getvalue().decode('utf-8')
+        df = pd.DataFrame(old_bytes)
+        df = pd.concat([df, file_data], ignore_index=True)
+        csv = df.to_csv(index=False)
+        file_data = io.BytesIO(csv.encode())
+
+        metadata = {
+            'name': file_name,
+            'parents': parents,
+        }
+        media = MediaIoBaseUpload(file_data, mimetype)
+        try:
+            file = self.drive.files().update(
+                body=metadata, media_body=media, fields='id').execute()
+        except HttpError as e:
+            log.error(f"Connection Failed: {e}")
+        except Exception as e:
+            log.error(f"Unexpected RunTimeError: {e}")
+        id = file.get('id')
+        if id:
+            log.info(f'{file_name} successfully added to Drive')
+            return id
+        else:
+            log.error(f"Failed to upload {file_name}")
+            return None
+
     def upload_drive(self, file_data: Union[pd.DataFrame, io.BytesIO], file_name: str, parents: list[str], mimetype: str) -> str:
         """Uploads file to google drive and returns file id"""
         drive = self.drive
@@ -184,6 +214,21 @@ class Google:
         else:
             log.error(f"Failed to upload {file_name}")
             return None
+
+    def get_csv(self, file_contains_string: str, parent_id: str) -> dict:
+        q = f"'{parent_id}' in parents and name contains '{
+            file_contains_string}' and mimeType='text/csv'"
+        try:
+            r = self.drive.files().list(q=q, spaces='drive', fields='files(id,name)').execute()
+            files = r.get('files')
+            if isinstance(files, list):
+                return files[0]
+            if isinstance(files, dict):
+                return files
+            return None
+        except Exception as e:
+            print(f"failure with csv: {e}")
+            raise ValueError("Couldn't find CSV")
 
     def get_failed_pdfs(self, parent_id) -> list[dict]:
         """Retrieves all .PDFs in folder that in _incomplete folders"""
@@ -260,7 +305,10 @@ class Google:
         file_csv_bytes = self.drive_file_to_bytes(
             failed_invoice.get('id')
         )
-        data = pd.read_csv(file_csv_bytes)
+        file_csv_bytes.seek(0)
+        csv_string = file_csv_bytes.getvalue().decode('utf-8')
+
+        data = pd.read_csv(csv_string)
         data, pdfs = add_invoices_col(data, pdfs)
 
         return data, pdfs
@@ -387,21 +435,29 @@ class Google:
                         self.upload_drive(
                             file, filename, [unprocessed_folder], p['mimeType'])
 
-        timestamp = dt.now().date()
+        timestamp = dt.now().strftime("%Y-%m-%d-%H:%M:%S")
         if success_list:
             success_df = pd.concat(success_list)
             print('---Successes----')
             print(success_df)
             if not debugging:
                 stats.upload_success = upload_dataframe_to_database(success_df)
-                self.upload_drive(
-                    success_df, f'{timestamp}_successes.csv', [invoice_folder], 'text/csv')
+                success_csv = self.get_csv('successes', invoice_folder)
+                self.update_csv_in_drive(
+                    success_csv.get('id'), success_df, f'{timestamp}_successes.csv', [
+                        invoice_folder], 'text/csv'
+                )
 
         if fail_list:
             fail_df = pd.concat(fail_list)
             print('---Failures----')
             print(fail_df)
             if not debugging:
+                failures_csv = self.get_csv('failures', invoice_folder)
+                self.update_csv_in_drive(
+                    failures_csv.get('id'), fail_df, f'{timestamp}_failures.csv', [
+                        invoice_folder], 'text/csv'
+                )
                 self.upload_drive(
                     fail_df, f'{timestamp}_failures.csv', [invoice_folder], 'text/csv')
 
