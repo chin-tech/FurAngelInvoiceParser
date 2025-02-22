@@ -308,7 +308,7 @@ class Google:
         file_csv_bytes.seek(0)
         csv_string = file_csv_bytes.getvalue().decode('utf-8')
 
-        data = pd.read_csv(csv_string)
+        data = pd.read_csv(io.StringIO(csv_string))
         data, pdfs = add_invoices_col(data, pdfs)
 
         return data, pdfs
