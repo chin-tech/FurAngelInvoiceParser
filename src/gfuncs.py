@@ -18,7 +18,7 @@ from google.cloud import secretmanager
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from invoices import get_parser
 from animal_getter import upload_dataframe_to_database
-from anima_getter import get_all_animals, match_animals, add_invoices_col
+from animal_getter import get_all_animals, match_animals, add_invoices_col
 from constants import SVC_ACCOUNT, SCOPES
 from constants import get_login_data
 from datetime import datetime as dt
