@@ -4,34 +4,27 @@ import pandas as pd
 import os
 import logging
 import shutil
-import io
-from datetime import datetime as dt
 from pathlib import Path
 import google.auth.transport.requests
 from google.oauth2 import id_token
-# import google.ouath2.id_token
 from google_auth_oauthlib.flow import Flow
 from rich import print
-from flask import Flask, request, redirect, url_for, session, render_template, jsonify, Response
-from constants import LOG_FILE
-from constants import TEST_TOKEN, PROD_TOKEN, OAUTH_FILE
+from flask import Flask, request, redirect, url_for
+from flask import session, jsonify, Response
+from constants import OAUTH_FILE, SCOPES, LOG_FILE
+from constants import PROD_TOKEN, PROD_EMAIL, FROM_LABEL, TO_LABEL
+from constants import SVC_ACCOUNT, PROJECT_ID, SECRET_NAME
 from constants import INVOICE_DIR, NON_INVOICES_DIR, UNPROCESSED_DIR
 from constants import TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL
-from constants import PROD_EMAIL, SVC_ACCOUNT, PROJECT_ID, SECRET_NAME
 from constants import REDIRECT_URI
-from constants import IS_DEBUG
+from constants import IS_DEBUG, GLOBAL_CREDS
 from constants import get_login_data
-from gfuncs import get_creds, get_creds_secret
-from gfuncs import get_drive_service, get_gmail_service
-from gfuncs import get_invoices_gmail  # , get_drive_folder
-from gfuncs import process_msg_invoices, prune_by_threadId, get_failed_pdfs
-from gfuncs import get_pdfs_in_drive, get_drive_folder, get_failed_csv, drive_file_to_bytes
-from gfuncs import upload_drive, get_invoice_folders, SCOPES
-from web_process import show_failed_invoices, get_post_data, update_invoice_data
+from web_process import show_failed_invoices, process_invoice_corrections
+from gfuncs import prune_by_threadId
+from gfuncs import Google
 from werkzeug.middleware.proxy_fix import ProxyFix
-# from gfuncs import parse_failed_pdfs_from_drive
-
-from animal_getter import get_all_animals, match_animals, get_probable_matches, upload_dataframe_to_database
+from animal_getter import prepare_animals_for_failure_matching, get_all_animals
+from animal_getter import match_animals
 from invoices import get_parser
 
 
@@ -44,22 +37,12 @@ GMAIL_INVOICE_LABEL = "Invoices/Vet invoice"
 # Drive Constants #
 DRIVE_INVOICES_FOLDER = "VET_INVOICES"
 
-GLOBAL_CREDS = ""
+# GLOBAL_CREDS = ""
 
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-
-
-def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
-    cols = ['invoice', 'invoice_date']
-    fails[cols] = fails['COSTDESCRIPTION'].str.extract(
-        r" - (\d+) - (\d{4}-\d{2}-\d{2})")
-    pdfs[cols] = pdfs['name'].str.extract(r"_(\d+)_(\d{4}-\d{2}-\d{2})")
-    pdfs['cmp'] = pdfs['invoice'] + '_' + pdfs['invoice_date']
-    fails['cmp'] = fails['invoice'] + '_' + fails['invoice_date']
-    return fails, pdfs
 
 
 def verify_request():
@@ -96,19 +79,19 @@ def routine_invoice_processor():
 @app.route('/process_all', methods=['GET'])
 def process_all_emailed_invoices():
     assert IS_DEBUG == 1
-    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
-    gmail = get_gmail_service(creds)
-    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
-    if email != PROD_EMAIL:
-        return 'Authorization Error', 403
-    drive = get_drive_service(creds)
-    messages = get_invoices_gmail(gmail, GMAIL_INVOICE_LABEL)
+    google = Google()
+    google.init_from_secret(PROJECT_ID, SECRET_NAME)
+    google.set_services()
+    if not google.email_matches(PROD_EMAIL):
+        return 'AUTHORIZATION ERRROR', '403'
+
+    messages = google.get_messages_from(GMAIL_INVOICE_LABEL)
     if not messages:
         raise Exception(f"No messages in folder! {GMAIL_INVOICE_LABEL} ")
     messages = prune_by_threadId(messages)
     log.info(f"Starting processing of {len(messages)}")
-    good = process_msg_invoices(gmail, drive, messages, DRIVE_INVOICES_FOLDER)
-    if good:
+
+    if google.process_invoices(messages, DRIVE_INVOICES_FOLDER, FROM_LABEL, TO_LABEL):
         return 'Success!', 200
     else:
         return 'Something Failed', 404
@@ -120,16 +103,15 @@ def routine_processor():
     if auth_error:
         return auth_error
     days = 14
-    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
-    gmail = get_gmail_service(creds)
-    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
-    if email != PROD_EMAIL:
-        return 'Authorization Error', 200
-    drive = get_drive_service(creds)
-    messages = get_invoices_gmail(gmail, GMAIL_INVOICE_LABEL, days)
+    google = Google()
+    google.init_from_secret(PROJECT_ID, SECRET_NAME)
+    google.set_services()
+    if not google.email_matches(PROD_EMAIL):
+        return 'Authorization Error', 403
+    messages = google.get_messages_from(GMAIL_INVOICE_LABEL, days)
     messages = prune_by_threadId(messages)
-    good = process_msg_invoices(gmail, drive, messages, DRIVE_INVOICES_FOLDER)
-    if good:
+
+    if google.process_invoices(messages, DRIVE_INVOICES_FOLDER, FROM_LABEL, TO_LABEL):
         return 'Success!', 200
     else:
         return 'Something Failed', 404
@@ -143,145 +125,74 @@ def oauth_callback():
     # url_for('oauth_callback', _external=True)
     flow.redirect_uri = REDIRECT_URI + '/oauth_callback'
 
-    print(flow.redirect_uri)
     auth_response = request.url
-    print(auth_response)
     flow.fetch_token(authorization_response=auth_response)
+    session['creds'] = flow.credentials
 
     global GLOBAL_CREDS
     GLOBAL_CREDS = flow.credentials
     return redirect(url_for('process_failed_invoices'))
 
 
-@app.route('/failed_invoices', methods=['GET', 'POST'])
-def process_failed_invoices():
+@app.route('/retry_failed', methods=['GET', 'POST'])
+def process_failed2():
     global GLOBAL_CREDS
-    # creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
+    print(REDIRECT_URI)
+    google = Google()
     if not GLOBAL_CREDS:
-        # url_for('oauth_callback', _external=True)
-        redirect_uri = REDIRECT_URI + '/oauth_callback'
-        creds = get_creds(OAUTH_FILE, "", True, redirect_uri)
-        if isinstance(creds, Response):
-            return creds
-    creds = GLOBAL_CREDS
-    gmail = get_gmail_service(creds)
-    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
-    if email != PROD_EMAIL:
-        return 'Authorization Error', 403
-    drive = get_drive_service(creds)
-    parent_folder = get_drive_folder(drive, 'VET_INVOICES')
-    pdfs = pd.DataFrame(get_failed_pdfs(drive, parent_folder))
-    animal_df = get_all_animals(get_login_data())
-    animal_df.sort_values(by='DATEBROUGHTIN')
-    animal_df['date_in'] = animal_df['DATEBROUGHTIN'].dt.date
-    animal_df['last_day_on_shelter'] = animal_df['end_date'].dt.date
-    failed_invoice = get_failed_csv(drive, parent_folder)
-    assert failed_invoice != None
-    failed_bytes = drive_file_to_bytes(drive, failed_invoice.get('id'))
-    assert failed_bytes != None
-    f_frame = pd.read_csv(failed_bytes)
-    f_frame, pdfs = add_invoices_col(f_frame, pdfs)
+        redirect = REDIRECT_URI + '/oauth_callback'
+        google.creds = google.init_from_web(OAUTH_FILE, redirect)
+    if isinstance(google.creds, Response):
+        return google.creds
+    google.creds = GLOBAL_CREDS
+    google.set_services()
+    parent_folder = google.get_drive_folder(DRIVE_INVOICES_FOLDER)
+    failed, pdfs = google.get_failed_invoice_data(parent_folder)
+    animals = prepare_animals_for_failure_matching()
 
     if request.method == 'GET':
-        return show_failed_invoices(f_frame, pdfs, animal_df)
+        return show_failed_invoices(failed, pdfs, animals)
 
-    if request.method == 'POST':
-        post_df = get_post_data(request, animal_df)
-        updated = update_invoice_data(f_frame, post_df)
-        good_data_condition = updated['ANIMALCODE'] != 'ERROR_CODE'
-        to_upload = updated[good_data_condition]
-        if to_upload.empty:
-            return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
-
-        to_fails = updated[~good_data_condition]
-        error_name = f"{dt.now().date()}-failures.csv"
-        new_id = upload_drive(drive, to_fails.drop(['invoice', 'invoice_date', 'cmp'], axis=1), error_name, [
-                              parent_folder], 'text/csv')
-        corrected_id = upload_drive(drive, to_upload, f'{dt.now(
-        ).date()}_corrections.csv', [parent_folder], 'text/csv')
-        success = upload_dataframe_to_database(to_upload.drop(
-            ['invoice', 'invoice_date', 'cmp'], axis=1), False)
-        if success:
-            if new_id:
-                drive.files().delete(fileId=failed_invoice.get('id')).execute()
-            batch = drive.new_batch_http_request()
-            folders = pd.DataFrame(get_invoice_folders(drive, parent_folder))
-            completed_pdfs = to_upload['cmp'].unique()
-            incomplete_pdfs = to_fails['cmp'].unique()
-            completed_invoices = pdfs[
-                (pdfs['cmp'].isin(completed_pdfs)) &
-                (~pdfs['cmp'].isin(incomplete_pdfs))
-            ]
-            for pdf in completed_invoices.itertuples():
-                invoice_type = pdf.name.split('_')[0]
-                incomplete_folder = folders[folders['name'] == f"{
-                    invoice_type}_incomplete"]['id'].values[0]
-                complete_folder = folders[folders['name'] == f"{
-                    invoice_type}_completed"]['id'].values[0]
-                batch.add(drive.files().update(
-                    fileId=pdf.id,
-                    addParents=complete_folder,
-                    removeParents=incomplete_folder,
-                ))
-            batch.execute()
-            GLOBAL_CREDS = None
-
-        return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
+    return process_invoice_corrections(google, request, parent_folder, failed, pdfs, animals)
 
 
-def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
-    cols = ['invoice', 'invoice_date']
-    fails[cols] = fails['COSTDESCRIPTION'].str.extract(
-        r" - (\d+) - (\d{4}-\d{2}-\d{2})")
-    pdfs[cols] = pdfs['name'].str.extract(r"_(\d+)_(\d{4}-\d{2}-\d{2})")
-    pdfs['cmp'] = pdfs['invoice'] + '_' + pdfs['invoice_date']
-    fails['cmp'] = fails['invoice'] + '_' + fails['invoice_date']
-    return fails, pdfs
-
-
-@app.route('/debug_failed', methods=['GET', 'POST'])
-def process_fail_debug():
-    assert IS_DEBUG == 1
-    creds = get_creds(OAUTH_FILE, PROD_TOKEN)
-    drive = get_drive_service(creds)
-    parent_folder = get_drive_folder(drive, 'VET_INVOICES')
-    pdfs = pd.DataFrame(get_failed_pdfs(drive, parent_folder))
-    assert pdfs.empty == False
-    animal_df = get_all_animals(get_login_data())
-    animal_df.sort_values(by='DATEBROUGHTIN')
-    animal_df['date_in'] = animal_df['DATEBROUGHTIN'].dt.date
-    animal_df['last_day_on_shelter'] = animal_df['end_date'].dt.date
-    bads = pd.read_csv('../data/completed_csvs/errata.csv')
-    bads, pdfs = add_invoices_col(bads, pdfs)
+@app.route('/dbg_failed', methods=['GET', 'POST'])
+def fail_debug_processor():
+    global GLOBAL_CREDS
+    print(REDIRECT_URI)
+    google = Google()
+    google.init_from_token(OAUTH_FILE, PROD_TOKEN)
+    google.set_services()
+    parent_folder = google.get_drive_folder(DRIVE_INVOICES_FOLDER)
+    failed, pdfs = google.get_failed_invoice_data(parent_folder)
+    animals = prepare_animals_for_failure_matching()
 
     if request.method == 'GET':
-        return show_failed_invoices(bads, pdfs, animal_df)
+        return show_failed_invoices(failed, pdfs, animals)
 
-    if request.method == 'POST':
-        post_df = get_post_data(request, animal_df)
-        post_df.to_csv('../data/post_data.csv', index=False)
-        updated = update_invoice_data(bads, post_df)
-        updated.to_csv("../data/completed_csvs/updated_errata.csv")
-
-        return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
+    return process_invoice_corrections(google, request, parent_folder, failed, pdfs, animals)
 
 
-@app.route('/debug_routine', methods=['GET'])
+@app.route('/dbg_routine', methods=['GET'])
 def test_process():
     assert IS_DEBUG == 1
-    creds = get_creds(OAUTH_FILE, TEST_TOKEN)
-    gmail = get_gmail_service(creds)
-    drive = get_drive_service(creds)
-    messages = get_invoices_gmail(gmail, 'invoices')
-    good = process_msg_invoices(gmail, drive, messages, 'test_invoices123',
-                                from_label=TEST_LABEL, to_label=TEST_LABEL_COMPLETE, is_debug=True)
+    google = Google()
+    google.init_from_token(OAUTH_FILE, PROD_TOKEN, False)
+    google.set_services()
+    messages = google.get_messages_from(GMAIL_INVOICE_LABEL)
+    if not messages or len(messages) == 0:
+        return 'No messages found', 200
+    messages = prune_by_threadId(messages)
+    good = google.process_invoices(
+        messages, DRIVE_INVOICES_FOLDER,
+        from_label=FROM_LABEL, to_label=TO_LABEL, debugging=True)
     if good:
         return 'Success!', 200
     else:
         return 'Something Failed', 404
 
 
-@app.route('/debug', methods=['GET'])
+@app.route('/dbg', methods=['GET'])
 def run_local():
     assert IS_DEBUG == 1
     logging.basicConfig(filename=LOG_FILE, level=logging.INFO)
@@ -326,7 +237,7 @@ def run_local():
             try:
                 shutil.move(invoice, UNPROCESSED_DIR)
             except Exception as e:
-                print(f"File {invoice} exists there already")
+                print(f"File {invoice} exists there already: {e}")
                 continue
             print(f"\t[ERROR]: {e}")
     print("--------------")
@@ -344,13 +255,15 @@ def run_local():
 
 @app.route('/test_basic_api', methods=['GET'])
 def test_apis():
-    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
-    gmail = get_gmail_service(creds)
-    drive = get_drive_service(creds)
-    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+    assert IS_DEBUG == 1
+    google = Google()
+    google.init_from_secret(PROJECT_ID, SECRET_NAME)
+    google.set_services()
+    match = google.email_matches(PROD_EMAIL)
 
-    assert email == PROD_EMAIL
-    assert drive != None
+    assert True == match
+    assert google.drive != None
+    assert google.gmail != None
     return "Success! We can access data!", 200
 
 
@@ -359,13 +272,14 @@ def test_auth_with_apis():
     auth_error = verify_request()
     if auth_error:
         return auth_error
-    creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
-    gmail = get_gmail_service(creds)
-    drive = get_drive_service(creds)
-    email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+    google = Google()
+    google.init_from_secret(PROJECT_ID, SECRET_NAME)
+    google.set_services()
+    match = google.email_matches(PROD_EMAIL)
 
-    assert email == PROD_EMAIL
-    assert drive != None
+    assert True == match
+    assert google.drive != None
+    assert google.gmail != None
     return "Success! We can access data!", 200
 
 
@@ -394,3 +308,123 @@ if __name__ == '__main__':
 #     assert vp.parse("Leptospirosis 4 vaccine") == Vaccine.LEPTOSPIROSIS
 # from gfuncs import get_creds, process_msg_invoices, get_drive_service, get_gmail_service, get_invoices_gmail, get_drive_folder, parse_failed_pdfs_from_drive, get_failed_pdfs
 # from constants import LOG_FILE, TEST_TOKEN, PROD_TOKEN, OAUTH_FILE, INVOICE_DIR, NON_INVOICES_DIR, TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL, PROD_EMAIL, SVC_ACCOUNT, get_login_data
+
+
+# @app.route('/debug_failed', methods=['GET', 'POST'])
+# def process_fail_debug():
+#     assert IS_DEBUG == 1
+#     google = Google()
+#     google.init_from_token(OAUTH_FILE, PROD_TOKEN, False)
+#     google.set_services()
+#     print(google.creds)
+#     print(google.drive)
+#     print(google.gmail)
+#     parent_folder = google.get_drive_folder(DRIVE_INVOICES_FOLDER)
+#     pdfs = pd.DataFrame(google.get_failed_pdfs(parent_folder))
+#     assert pdfs.empty == False
+#     animals = prepare_animals_for_failure_matching()
+#     bads = pd.read_csv('../data/completed_csvs/errata.csv')
+#     bads, pdfs = add_invoices_col(bads, pdfs)
+#
+#     if request.method == 'GET':
+#         return show_failed_invoices(bads, pdfs, animals)
+#
+#     if request.method == 'POST':
+#         post_df = get_post_data(request, animals)
+#         post_df.to_csv('../data/post_data.csv', index=False)
+#         updated = update_invoice_data(bads, post_df)
+#         updated.to_csv("../data/completed_csvs/updated_errata.csv")
+#
+#         return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
+#
+
+
+# @app.route('/failed_invoices', methods=['GET', 'POST'])
+# def process_failed_invoices():
+#     global GLOBAL_CREDS
+#     # creds = get_creds_secret(PROJECT_ID, SECRET_NAME)
+#     google = Google()
+#     if not GLOBAL_CREDS:
+#         # url_for('oauth_callback', _external=True)
+#         redirect_uri = REDIRECT_URI + '/oauth_callback'
+#         google.creds = google.init_from_web(OAUTH_FILE, redirect_uri)
+#         # creds = get_creds(OAUTH_FILE, "", True, redirect_uri)
+#         if isinstance(google.creds, Response):
+#             return google.creds
+#     google.creds = session['creds']
+#     creds = GLOBAL_CREDS
+#     gmail = get_gmail_service(creds)
+#     email = gmail.users().getProfile(userId='me').execute()['emailAddress']
+#     if email != PROD_EMAIL:
+#         return 'Authorization Error', 403
+#     drive = get_drive_service(creds)
+#     parent_folder = get_drive_folder(drive, DRIVE_INVOICES_FOLDER)
+#     pdfs = pd.DataFrame(get_failed_pdfs(drive, parent_folder))
+#     animal_df = get_all_animals(get_login_data())
+#     animal_df.sort_values(by='DATEBROUGHTIN')
+#     animal_df['date_in'] = animal_df['DATEBROUGHTIN'].dt.date
+#     animal_df['last_day_on_shelter'] = animal_df['end_date'].dt.date
+#     failed_invoice = get_failed_csv(drive, parent_folder)
+#     assert failed_invoice != None
+#     failed_bytes = drive_file_to_bytes(drive, failed_invoice.get('id'))
+#     assert failed_bytes != None
+#     f_frame = pd.read_csv(failed_bytes)
+#     f_frame, pdfs = add_invoices_col(f_frame, pdfs)
+#
+#     if request.method == 'GET':
+#         return show_failed_invoices(f_frame, pdfs, animal_df)
+#
+#     if request.method == 'POST':
+#         post_df = get_post_data(request, animal_df)
+#         updated = update_invoice_data(f_frame, post_df)
+#         good_data_condition = updated['ANIMALCODE'] != 'ERROR_CODE'
+#         to_upload = updated[good_data_condition]
+#         if to_upload.empty:
+#             return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
+#
+#         to_fails = updated[~good_data_condition]
+#         timestamp = dt.now().date()
+#         error_name = f"{timestamp}-failures.csv"
+#         success_name = f"{timestamp}-corrections.csv"
+#         new_id = upload_drive(
+#             drive, to_fails.drop(['invoice', 'invoice_date', 'cmp'], axis=1), error_name, [
+#                 parent_folder], 'text/csv'
+#         )
+#         corrected_folder = get_drive_folder(
+#             drive, 'corrections', parent_folder)
+#         corrected_id = upload_drive(
+#             drive, to_upload, f'{success_name}', [corrected_folder], 'text/csv'
+#         )
+#         success = upload_dataframe_to_database(
+#             to_upload.drop(
+#                 ['invoice', 'invoice_date', 'cmp'], axis=1
+#             ), False)
+#         if success:
+#             if new_id:
+#                 old_id = failed_invoice.get('id')
+#                 drive.files().delete(fileId=old_id).execute()
+#                 print(f"Deleted {failed_invoice.get('name')}")
+#             batch = drive.new_batch_http_request()
+#             folders = pd.DataFrame(get_invoice_folders(drive, parent_folder))
+#             completed_pdfs = to_upload['cmp'].unique()
+#             incomplete_pdfs = to_fails['cmp'].unique()
+#             completed_invoices = pdfs[
+#                 (pdfs['cmp'].isin(completed_pdfs)) &
+#                 (~pdfs['cmp'].isin(incomplete_pdfs))
+#             ]
+#             for pdf in completed_invoices.itertuples():
+#                 invoice_type = pdf.name.split('_')[0]
+#                 incomplete_folder = folders[folders['name'] == f"{
+#                     invoice_type}_incomplete"]['id'].values[0]
+#                 complete_folder = folders[folders['name'] == f"{
+#                     invoice_type}_completed"]['id'].values[0]
+#                 batch.add(drive.files().update(
+#                     fileId=pdf.id,
+#                     addParents=complete_folder,
+#                     removeParents=incomplete_folder,
+#                 ))
+#             batch.execute()
+#             GLOBAL_CREDS = None
+#
+#         return render_template('post.html', invoices=post_df.shape[0], rows=updated[updated['ANIMALCODE'] != 'ERROR_CODE'].shape[0])
+#

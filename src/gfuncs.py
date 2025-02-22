@@ -5,9 +5,7 @@ import logging
 import base64
 import pickle
 import os
-import json
-from flask import session, request, redirect
-from pathlib import Path
+from flask import session, redirect
 from collections import defaultdict
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -19,8 +17,9 @@ from google.auth.transport.requests import Request
 from google.cloud import secretmanager
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from invoices import get_parser
-from animal_getter import upload_dataframe_to_database, get_all_animals, match_animals
-from constants import SVC_ACCOUNT
+from animal_getter import upload_dataframe_to_database
+from anima_getter import get_all_animals, match_animals, add_invoices_col
+from constants import SVC_ACCOUNT, SCOPES
 from constants import get_login_data
 from datetime import datetime as dt
 from datetime import timedelta as td
@@ -28,61 +27,11 @@ from typing import Union
 
 log = logging.getLogger(__name__)
 
-# GOOGLE SCOPES
-SCOPES = [
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.modify'
-]
-
 # GMAIL DATE FORMAT
 GMAIL_DATE = "%a, %d %b %Y %H:%M:%S %z"
 GMAIL_DATE_ZONE = "%a, %d %b %Y %H:%M:%S %z (%Z)"
 
-# INVOICE LABELS
-INCOMPLETE_INVOICE = 'Label_5838368921937526589'
-COMPLETE_INVOICE = 'Label_342337121491929089'
-
 NON_INVOICE_REGEXES = r"statement|treatment|estimate|record|payment"
-
-
-def get_creds(client_id_file: str, token_file: str, secure: bool = False, redirect_url: request = None) -> Credentials:
-    """Returns google auth credentials with given id_file or stored token file"""
-    creds = None
-    if not token_file:
-        if os.path.exists(token_file):
-            with open(token_file, 'rb') as token:
-                creds = pickle.load(token)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_config(
-                client_id_file, SCOPES
-            )
-            if redirect_url:
-                flow.redirect_uri = redirect_url
-
-            auth_url, state = flow.authorization_url(
-                access_type='offline',
-                include_granted_scopes='true',
-            )
-            session['state'] = state
-            # flow = InstalledAppFlow.from_client_secrets_file(
-            #     client_id_file, SCOPES)
-            return redirect(auth_url)
-            # creds = flow.run_local_server(port=0)
-            # auth_url, state = flow.authorization_url(
-            #     access_type='offline',
-            #     include_granted_scopes='true',
-            #     redirect_uri=[redirect_url.base_url]
-            # )
-            # return redirect(auth_url)
-        if not secure:
-            with open(token_file, 'wb') as token:
-                pickle.dump(creds, token)
-    return creds
 
 
 def get_secret(name, project) -> Credentials:
@@ -104,143 +53,367 @@ def update_secret(name, project, value):
     )
 
 
-def get_creds_secret(project, token_name):
-    creds = get_secret(token_name, project)
+class Google:
 
-    if not creds.valid or creds.expired:
-        creds.refresh(Request())
-        if creds.refresh_token:
-            update_secret(token_name, project, creds)
-    return creds
+    def __init__(self):
+        self.creds = None
+        self.gmail = None
+        self.drive = None
 
+    def init_from_web(self, config: dict, redirect_url: str = None) -> Credentials:
+        """ Initializes credentials via a web request to authenticate the user"""
+        flow = InstalledAppFlow.from_client_config(
+            config, SCOPES
+        )
+        if redirect:
+            flow.redirect_uri = redirect_url
 
-def get_drive_service(creds=None):
-    """Returns Google Drive service with given credentials"""
-    if not creds:
-        creds = Credentials.from_authorized_user_info(session['credentials'])
-    service = build('drive', 'v3', credentials=creds)
-    return service
+        auth_url, state = flow.authorization_url(
+            access_type="offline",
+            include_granted_scopes="true",
+        )
+        session['state'] = state
+        return redirect(auth_url)
 
+    def init_from_token(self, config: str, token_file: str, secure: bool = True) -> Credentials:
+        """ Initialize credentials from token file. Used for debugging purposes."""
+        creds = None
+        if token_file:
+            if os.path.exists(token_file):
+                with open(token_file, 'rb') as tk:
+                    creds = pickle.load(tk)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+        if not creds or not creds.valid:
+            flow = InstalledAppFlow.from_client_config(config, scopes=SCOPES)
+            creds = flow.run_local_server(port=0)
 
-def get_gmail_service(creds=None):
-    """Returns Google's GMail service with given credentials"""
-    if not creds:
-        creds = Credentials.from_authorized_user_info(session['credentials'])
-    service = build('gmail', 'v1', credentials=creds)
-    return service
+        if not secure:
+            with open(token_file, 'wb') as tk:
+                pickle.dump(creds, tk)
+        assert creds != None
+        self.creds = creds
 
+    def init_from_secret(self, secret_name: str, project_id: str) -> Credentials:
+        creds = get_secret(secret_name, project_id)
 
-def get_drive_folder(service, folder_name, parent_folder_id=None) -> str:
-    """Returns drive folder ID; creates if it doesn't exist, adds to parent if provided."""
+        if not creds.valid or creds.expired:
+            creds.refresh(Request())
+            if creds.refresh_token:
+                update_secret(secret_name, project_id, creds)
+        self.creds = creds
 
-    mime_type = 'application/vnd.google-apps.folder'
-    query = f"name='{folder_name}' and mimeType='{mime_type}'"
+    def set_services(self):
+        assert self.creds != None
+        self.gmail = build('gmail', 'v1', credentials=self.creds)
+        self.drive = build('drive', 'v3', credentials=self.creds)
 
-    if parent_folder_id:
-        # Add parent folder to query
-        query += f" and '{parent_folder_id}' in parents"
+    def email_matches(self, email: str) -> bool:
+        current = self.gmail.users().getProfile(
+            userId='me').execute()['emailAddress']
+        return current == email
 
-    res = service.files().list(q=query, spaces='drive').execute()
-    files = res.get('files', [])
-
-    if not files:
-        file_metadata = {
-            'name': folder_name,
-            'mimeType': mime_type,
-        }
+    def get_drive_folder(self, folder_name, parent_folder_id=None) -> str:
+        """Returns drive folder ID; creates if it doesn't exist, adds to parent if provided."""
+        mime_type = 'application/vnd.google-apps.folder'
+        query = f"name='{folder_name}' and mimeType='{mime_type}'"
 
         if parent_folder_id:
-            # Add parent folder to metadata
-            file_metadata['parents'] = [parent_folder_id]
+            # Add parent folder to query
+            query += f" and '{parent_folder_id}' in parents"
 
-        file = service.files().create(body=file_metadata, fields='id').execute()
-        log.info(f"{folder_name}: Created with ID: {file.get('id')}")
-        return file.get('id')
+        res = self.drive.files().list(q=query, spaces='drive').execute()
+        files = res.get('files', [])
 
-    # Ensure parent is set if it was provided
-    files_parents = files[0].get('parents', [])
-    if parent_folder_id and not any(parent_folder_id in parents for parents in files_parents):
-        file_metadata = {
-            'addParents': [parent_folder_id]
+        if not files:
+            file_metadata = {
+                'name': folder_name,
+                'mimeType': mime_type,
+            }
+
+            if parent_folder_id:
+                # Add parent folder to metadata
+                file_metadata['parents'] = [parent_folder_id]
+
+            file = self.drive.files().create(body=file_metadata, fields='id').execute()
+            log.info(f"{folder_name}: Created with ID: {file.get('id')}")
+            return file.get('id')
+
+        # Ensure parent is set if it was provided
+        files_parents = files[0].get('parents', [])
+        if parent_folder_id and not any(parent_folder_id in parents for parents in files_parents):
+            file_metadata = {
+                'addParents': [parent_folder_id]
+            }
+            file = self.drive.files().update(fileId=files[0].get(
+                'id'), body=file_metadata, fields='id').execute()
+            log.info(f"{folder_name}: Updated to add parent ID: {
+                     parent_folder_id}")
+
+        return files[0].get('id')
+
+    def upload_drive(self, file_data: Union[pd.DataFrame, io.BytesIO], file_name: str, parents: list[str], mimetype: str) -> str:
+        """Uploads file to google drive and returns file id"""
+        drive = self.drive
+        if isinstance(file_data, pd.DataFrame):
+            csv = file_data.to_csv(index=False)
+            file_data = io.BytesIO(csv.encode())
+        initial_check = f'name = "{file_name}" and "{
+            parents[0]}" in parents and trashed = false'
+
+        r = drive.files().list(q=initial_check, spaces='drive', fields='files(id)').execute()
+        if r.get('files'):
+            log.warn(f"File: '{file_name}' exsist. Skipping")
+            return None
+        metadata = {
+            'name': file_name,
+            'parents': parents,
         }
-        file = service.files().update(fileId=files[0].get(
-            'id'), body=file_metadata, fields='id').execute()
-        log.info(f"{folder_name}: Updated to add parent ID: {
-                 parent_folder_id}")
+        media = MediaIoBaseUpload(file_data, mimetype)
+        try:
+            file = drive.files().create(body=metadata, media_body=media, fields='id').execute()
+        except HttpError as e:
+            log.error(f"Connection Failed: {e}")
+        except Exception as e:
+            log.error(f"Unexpected RunTimeError: {e}")
+        id = file.get('id')
+        if id:
+            log.info(f'{file_name} successfully added to Drive')
+            return id
+        else:
+            log.error(f"Failed to upload {file_name}")
+            return None
 
-    return files[0].get('id')
+    def get_failed_pdfs(self, parent_id) -> list[dict]:
+        """Retrieves all .PDFs in folder that in _incomplete folders"""
+        drive = self.drive
+        try:
+            query = f"'{parent_id}' in parents and name contains '_incomplete'"
+            res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
+            incomplete_folders = res.get('files', [])
+
+            pdf_files = []
+            for folder in incomplete_folders:
+                folder_id = folder['id']
+
+                pdf_query = f"'{
+                    folder_id}' in parents and mimeType='application/pdf'"
+                r = drive.files().list(q=pdf_query, spaces='drive',
+                                       fields='files(id,name,webViewLink)').execute()
+                pdfs = r.get('files', [])
+                pdf_files.extend(pdfs)
+            return pdf_files
+        except Exception as e:
+            log.error(f"Error: {e}")
+            assert True == False
+
+    def get_failures_csv(self, parent_id) -> Union[list[dict], None]:
+        """Gets all csvs with _failures in the name in the appropriate folder"""
+        drive = self.drive
+        try:
+            query = f"'{
+                parent_id}' in parents and name contains '_failures' and mimeType='text/csv'"
+            res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
+            files = res.get('files')
+            if len(files) != 1:
+                files.sort(key=lambda x: x.get('name'), reverse=True)
+            return files
+        except Exception as e:
+            print(f"Failed to grab failures, ironic huh? {e}")
+            return None
+
+    def drive_file_to_bytes(self, file_id) -> Union[io.BytesIO, None]:
+        """Reads a file from drive and returns a BytesIO object for manipulation"""
+        drive = self.drive
+        try:
+            req = drive.files().get_media(fileId=file_id)
+            file = io.BytesIO()
+            downloader = MediaIoBaseDownload(file, req)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            file.seek(0)
+            return file
+        except Exception as e:
+            log.error(f"Error reading file: {e}")
+            return None
+
+    def get_invoice_folders(self, parent_id):
+        drive = self.drive
+        try:
+            q = f"'{
+                parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder'"
+            r = drive.files().list(q=q, spaces='drive', fields='files(id,name)').execute()
+            return r.get('files')
+        except Exception as e:
+            log.error(f"Could not retrieve drive folders: {e}")
+
+    def get_failed_invoice_data(self, parent_folder) -> (pd.DataFrame, pd.DataFrame):
+        """Returns the failed invoice data from the parent folder. CSV data and PDF listing"""
+        pdfs = pd.DataFrame(self.get_failed_pdfs(parent_folder))
+        failed_invoices = self.get_failures_csv(parent_folder)
+        if not failed_invoices:
+            raise ValueError("Failures_CSV is not found")
+
+        failed_invoice = failed_invoices[0]
+        file_csv_bytes = self.drive_file_to_bytes(
+            failed_invoice.get('id')
+        )
+        data = pd.read_csv(file_csv_bytes)
+        data, pdfs = add_invoices_col(data, pdfs)
+
+        return data, pdfs
+
+    def get_messages_from(self, folder_name, days_ago: int = None) -> list[dict]:
+        """Returns all messages in given folder for further processing"""
+        gmail = self.gmail
+        try:
+            # Get folder ID
+            labels = gmail.users().labels().list(userId='me').execute().get('labels', [])
+            folder_id = next(
+                (label['id'] for label in labels if label['name'] == folder_name), None)
+
+            if not folder_id:
+                log.error(f"Folder '{folder_name}' not found.")
+                return
+
+            if days_ago:
+                cutoff = dt.now() - td(days=days_ago)
+                cutoff_date = cutoff.strftime("%Y/%m/%d")
+
+            # Fetch all messages in the folder (handling pagination)
+            messages = []
+            page_token = None
+
+            while True:
+                query = f"after:{cutoff_date}" if days_ago else ""
+                response = gmail.users().messages().list(
+                    userId='me', q=query, labelIds=[folder_id], pageToken=page_token
+                ).execute()
+
+                messages.extend(response.get('messages', []))
+                page_token = response.get('nextPageToken')
+
+                if not page_token:
+                    break
+
+            if not messages:
+                log.info(f"No messages found in folder '{folder_name}'.")
+                return
+            return messages
+        except Exception as e:
+            log.error(f"{e}")
+            return None
+
+    def process_invoices(self, messages: list[dict], folder_name: str, from_label: str, to_label: str, debugging: bool = False) -> bool:
+        animals = get_all_animals(get_login_data())
+        stats = Statistics(emails_count=len(messages))
+
+        invoice_folder = self.get_drive_folder(folder_name)
+        unprocessed_folder = self.get_drive_folder(
+            'unprocessed_invoices', invoice_folder)
+
+        success_list, fail_list = [], []
+        batch_gmail = self.gmail.new_batch_http_request()
+        for message in messages:
+            msg_id = message['id']
+            try:
+                msg = self.gmail.users().messages().get(userId='me', id=msg_id).execute()
+                headers = msg.get('payload', {}).get('headers', [])
+                sender_email, date_str = get_email_dates_sender(headers)
+            except Exception as e:
+                log.error(f"Error processing email_id={msg_id}: {e}")
+                continue
+
+            attachments = [
+                p for p in msg.get('payload', {}).get('parts', [])
+                if p.get('filename') and 'attachmentId' in p.get('body', {})
+            ]
+
+            for p in attachments:
+                normalized_name = p['filename'].replace(' ', '_')
+                filename = f"{date_str}_{
+                    sender_email}_{normalized_name}.pdf"
+                if re.search(NON_INVOICE_REGEXES, filename.lower()):
+                    stats.non_invoices.append(filename)
+                    continue
+                attachment = self.gmail.users().messages().attachments().get(
+                    userId='me', messageId=msg_id, id=p['body']['attachmentId']
+                ).execute()
+
+                file = io.BytesIO(base64.urlsafe_b64decode(
+                    attachment['data'].encode('UTF-8')))
+                try:
+                    parser = get_parser(
+                        file, filename=filename, is_drive=True)
+                    parser.parse_invoice()
+                    filename = parser.name
+
+                    parsed_items = match_animals(parser.items, animals)
+                    success_condition = parsed_items['ANIMALCODE'] != 'ERROR_CODE'
+                    if not parsed_items.empty:
+                        success_list.append(
+                            parsed_items[success_condition])
+                        fail_list.append(parsed_items[~success_condition])
+
+                    if parsed_items[~success_condition].empty:
+                        output_path = self.get_drive_folder(
+                            parser.drive_completed, invoice_folder)
+                        stats.successes.append(filename)
+                        batch_gmail.add(
+                            self.gmail.users().messages().modify(
+                                id=msg_id,
+                                userId='me',
+                                body={
+                                    'removeLabelIds': [from_label],
+                                    'addLabelIds': [to_label],
+                                }
+                            )
+                        )
+                    else:
+                        stats.fails.append(filename)
+                        output_path = self.get_drive_folder(
+                            parser.drive_incomplete, invoice_folder)
+
+                    if not debugging:
+                        self.upload_drive(
+                            file, filename, [output_path], p['mimeType'])
+                except Exception as e:
+                    log.error(f"{filename} with {
+                              msg_id} could not process: {e}")
+                    stats.fails.append(filename)
+                    if not debugging:
+                        self.upload_drive(
+                            file, filename, [unprocessed_folder], p['mimeType'])
+
+        timestamp = dt.now().date()
+        if success_list:
+            success_df = pd.concat(success_list)
+            print('---Successes----')
+            print(success_df)
+            if not debugging:
+                stats.upload_success = upload_dataframe_to_database(success_df)
+                self.upload_drive(
+                    success_df, f'{timestamp}_successes.csv', [invoice_folder], 'text/csv')
+
+        if fail_list:
+            fail_df = pd.concat(fail_list)
+            print('---Failures----')
+            print(fail_df)
+            if not debugging:
+                self.upload_drive(
+                    fail_df, f'{timestamp}_failures.csv', [invoice_folder], 'text/csv')
+
+        if not debugging:
+            batch_gmail.execute()
+
+        return stats.send_summary(self.gmail)
 
 
-def get_drive_folder_ids(drive):
-    "Debug Function: Returns all folders and ID's in google drive service"
-    query = "mimeType = 'application/vnd.google-apps.folder'"
-    res = drive.files().list(
-        q=query,
-        spaces='drive',
-        fields='nextPageToken, files(id,name)'
-    ).execute()
-    files = res.get('files', [])
-    if not files:
-        print("No Folders Found!")
-    print("-- Folders -- ")
-    for folder in files:
-        print(f"{folder.get('name')}: {folder.get('id')}")
-    while res.get('nextPageToken'):
-        res = drive.files().list(
-            q=query,
-            spaces='drive',
-            fields='nextPageToken, files(id,name)',
-            pageToken=res.get('nextPageToken')
-        ).execute()
-        folders = res.get('files', [])
-        for folder in folders:
-            print(f"{folder.get('name')}: {folder.get('id')}")
-    return None
-
-
-def get_invoices_gmail(gmail, folder_name, days_ago: int = None):
-    """Returns all messages in given folder for further processing"""
-    try:
-        # Get folder ID
-        labels = gmail.users().labels().list(userId='me').execute().get('labels', [])
-        folder_id = next(
-            (label['id'] for label in labels if label['name'] == folder_name), None)
-
-        if not folder_id:
-            log.error(f"Folder '{folder_name}' not found.")
-            return
-
-        if days_ago:
-            cutoff = dt.now() - td(days=days_ago)
-            cutoff_date = cutoff.strftime("%Y/%m/%d")
-
-        # Fetch all messages in the folder (handling pagination)
-        messages = []
-        page_token = None
-
-        while True:
-            query = f"after:{cutoff_date}" if days_ago else ""
-            response = gmail.users().messages().list(
-                userId='me', q=query, labelIds=[folder_id], pageToken=page_token
-            ).execute()
-
-            messages.extend(response.get('messages', []))
-            page_token = response.get('nextPageToken')
-
-            if not page_token:
-                break
-
-        if not messages:
-            log.info(f"No messages found in folder '{folder_name}'.")
-            return
-        return messages
-    except Exception as e:
-        log.error(f"{e}")
-        return None
-
-
-def prune_by_threadId(messages: list) -> list:
+def prune_by_threadId(messages: list[dict]) -> list[dict]:
     """Prunes messages belonging to the same conversation"""
+    assert messages != None
     assert len(messages) != 0
     msgs = defaultdict(list)
     for m in messages:
@@ -271,249 +444,11 @@ def get_email_dates_sender(headers) -> (str, str):
     return sender, date
 
 
-def process_msg_invoices(gmail, drive, messages: list, folder: str, local=False, from_label=INCOMPLETE_INVOICE, to_label=COMPLETE_INVOICE, is_debug: bool = False) -> bool:
-    """Checks given messages for invoices, parses them, moves successfully found emails from FROM_LABEL to TO_LABEL, copies them and the parsed content to a drive folder, and uploads the data to a database"""
-    animal_db = get_all_animals(get_login_data())
-    stats = Statistics()
-    stats.emails_count = len(messages)
-    invoice_folder = get_drive_folder(drive, folder)
-    unprocessed_folder = get_drive_folder(
-        drive, 'unprocessed_invoices', parent_folder_id=invoice_folder)
-    # Process each message
-    success, fail = pd.DataFrame(), pd.DataFrame()
-    for i, msg in enumerate(messages):
-        # print(f"Message: {i:04d} / {len(messages):04d}", end='\r')
-        msg_id = msg['id']
-        message = gmail.users().messages().get(userId='me', id=msg_id).execute()
-        payload = message.get("payload", {})
-        headers = payload.get("headers", [])
-        parts = payload.get("parts", [])
-
-        # Extract sender email
-        sender_email, date_str = get_email_dates_sender(headers)
-
-        # Check for attachments
-        for part in parts:
-            condition = part.get(
-                'filename') and 'attachmentId' in part.get('body', {})
-            # Only operate on attachements
-            if not (condition):
-                continue
-            attachment_id = part["body"]["attachmentId"]
-            attachment = gmail.users().messages().attachments().get(
-                userId='me', messageId=msg_id, id=attachment_id
-            ).execute()
-
-            # Construct filename with sender's email
-            normalized_name = part['filename'].replace(' ', '_')
-            if re.search(NON_INVOICE_REGEXES, normalized_name.lower()):
-                stats.non_invoices.append(normalized_name)
-                continue
-            filename = f"{date_str}_{sender_email}_{
-                normalized_name}"
-
-            file_data = base64.urlsafe_b64decode(
-                attachment["data"].encode("UTF-8"))
-            invoice = io.BytesIO(file_data)
-
-            output_path = unprocessed_folder
-            try:
-                parser = get_parser(
-                    invoice, filename=filename, is_drive=True)
-                parser.parse_invoice()
-                filename = parser.name
-                output_path = get_drive_folder(
-                    drive, parser.drive_dir, invoice_folder)
-                parsed_items = match_animals(parser.items, animal_db)
-                success_condition = parsed_items['ANIMALCODE'] != 'ERROR_CODE'
-
-                matched_data = parsed_items[success_condition]
-                unmatched_data = parsed_items[~success_condition]
-                if not matched_data.empty:
-                    success = pd.concat([success, matched_data])
-                if unmatched_data.empty:
-                    stats.successes.append(filename)
-                else:
-                    fail = pd.concat([fail, unmatched_data])
-                    stats.fails.append(filename)
-                try:
-                    gmail.users().messages().modify(
-                        id=msg_id,
-                        userId='me',
-                        body={
-                            'removeLabelIds': [from_label],
-                            'addLabelIds': [to_label],
-                        }
-                    ).execute()
-                except Exception as e:
-                    log.error(f"Failed modifying the email: {e}")
-            except Exception as e:
-                log.error(f"{filename} - Could not be processed | {e}")
-                stats.fails.append(filename)
-            upload_drive(drive, invoice, filename, [
-                         output_path], part['mimeType'])
-    stats.upload_success = upload_dataframe_to_database(success, is_debug)
-    success_file = f"{dt.now().date()}-successes.csv"
-    fail_file = f"{dt.now().date()}-failures.csv"
-    upload_drive(drive, success, success_file, [invoice_folder], 'text/csv')
-    upload_drive(drive, fail, fail_file, [invoice_folder], 'text/csv')
-
-    sent = stats.send_summary(gmail)
-    return sent
-
-
-def upload_drive(drive, file_data: Union[pd.DataFrame, io.BytesIO], file_name: str, parents: list[str], mimetype: str):
-    if isinstance(file_data, pd.DataFrame):
-        csv = file_data.to_csv(index=False)
-        file_data = io.BytesIO(csv.encode())
-    initial_check = f'name = "{file_name}" and "{
-        parents[0]}" in parents and trashed = false'
-
-    r = drive.files().list(q=initial_check, spaces='drive', fields='files(id)').execute()
-    if r.get('files'):
-        log.warn(f"File: '{file_name}' exits. Skipping")
-        return None
-    metadata = {
-        'name': file_name,
-        'parents': parents,
-    }
-    media = MediaIoBaseUpload(file_data, mimetype)
-    try:
-        file = drive.files().create(body=metadata, media_body=media, fields='id').execute()
-    except HttpError as e:
-        log.error(f"Connection Failed: {e}")
-    except Exception as e:
-        log.error(f"Unexpected RunTimeError: {e}")
-    id = file.get('id')
-    if id:
-        log.info(f'{file_name} successfully added to Drive')
-        return id
-    else:
-        log.error(f"Failed to upload {file_name}")
-        return None
-
-
-def get_pdfs_in_drive(drive, parent_id):
-    try:
-        query = f"'{parent_id}' in parents and name contains 'completed'"
-        res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
-        incomplete_folders = res.get('files', [])
-
-        pdf_files = []
-        for folder in incomplete_folders:
-            folder_id = folder['id']
-
-            pdf_query = f"'{
-                folder_id}' in parents and mimeType='application/pdf'"
-            r = drive.files().list(q=pdf_query, spaces='drive',
-                                   fields='files(id,name,webViewLink)').execute()
-            pdfs = r.get('files', [])
-            pdf_files.extend(pdfs)
-        return pdf_files
-    except Exception as e:
-        log.error(f"Error: {e}")
-
-
-def get_failed_pdfs(drive, parent_id):
-    """Retrieves all .PDFs in folder that in _incomplete folders"""
-    try:
-        query = f"'{parent_id}' in parents and name contains '_incomplete'"
-        res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
-        incomplete_folders = res.get('files', [])
-
-        pdf_files = []
-        for folder in incomplete_folders:
-            folder_id = folder['id']
-
-            pdf_query = f"'{
-                folder_id}' in parents and mimeType='application/pdf'"
-            r = drive.files().list(q=pdf_query, spaces='drive',
-                                   fields='files(id,name,webViewLink)').execute()
-            pdfs = r.get('files', [])
-            pdf_files.extend(pdfs)
-        return pdf_files
-    except Exception as e:
-        log.error(f"Error: {e}")
-
-
-def get_failed_csv(drive, parent_id):
-    try:
-        query = f"'{
-            parent_id}' in parents and name contains '_failures' and mimeType='text/csv'"
-        res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
-        return res.get('files')[0]
-    except Exception as e:
-        print(f"Failed to grab failures, ironic huh? {e}")
-
-
-def drive_file_to_bytes(drive, file_id) -> io.BytesIO:
-    """Reads a PDF from drive and returns a BytesIO object for manipulation"""
-    try:
-        req = drive.files().get_media(fileId=file_id)
-        file = io.BytesIO()
-        downloader = MediaIoBaseDownload(file, req)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        file.seek(0)
-        return file
-    except Exception as e:
-        log.error(f"Error reading file: {e}")
-        return None
-
-
-def get_invoice_folders(drive, parent_id):
-    try:
-        q = f"'{
-            parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder'"
-        r = drive.files().list(q=q, spaces='drive', fields='files(id,name)').execute()
-        return r.get('files')
-    except Exception as e:
-        log.error(f"Could not retrieve drive folders: {e}")
-
-
-def parse_failed_pdfs_from_drive(drive, pdf_files, animals_db: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
-    items = pd.DataFrame()
-    if not pdf_files:
-        return items
-    for pdf_file in pdf_files:
-        pdf = drive_file_to_bytes(drive, pdf_file['id'])
-        invoice_parser = get_parser(pdf, pdf_file['name'], True)
-        invoice_parser.parse()
-        items = pd.concat([items, invoice_parser.items])
-    items = match_animals(items, animals_db)
-    items = items[items['SHELTERCODE'] == 'ERROR_CODE'].copy()
-
-    return items
-
-
-def batch_move_drive(drive, ids, old_parent_id, new_parent_id):
-    batch = drive.new_batch_http_request()
-    for file_id in ids:
-        batch.add(drive.files().update(
-            fileId=file_id,
-            addParents=new_parent_id,
-            removeParents=old_parent_id,
-        ))
-        batch.execute()
-
-
-def batch_delete_drive(drive, ids):
-    batch = drive.new_batch_http_request()
-    for id in ids:
-        batch.add(drive.files().delete(fileId=id))
-    batch.execute()
-
-
-def retry_failed(gmail, drive,):
-    pass
-
-
 class Statistics:
     upload_success = False
 
-    def __init__(self):
-        self.emails_count = 0
+    def __init__(self, emails_count: int):
+        self.emails_count = emails_count
         self.entries = 0
         self.successes = list()
         self.fails = list()

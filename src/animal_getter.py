@@ -77,6 +77,14 @@ def prep_animal_df(df: pd.DataFrame, date_col: str, days_col: str, name_col: str
     return df
 
 
+def prepare_animals_for_failure_matching() -> pd.DataFrame:
+    animals = get_all_animals(get_login_data())
+    animals.sort_values(by='DATEBROUGHTIN', inplace=True)
+    animals['date_in'] = animals['DATEBROUGHTIN'].dt.date
+    animals['last_day_on_shelter'] = animals['end_date'].dt.date
+    return animals
+
+
 def get_probable_matches(animal: str, df: pd.DataFrame, date: dt = None) -> pd.DataFrame:
     animal = re.sub(r"[?'\"]", '', animal.lower())
     pattern = r'\b' + r'\b|\b'.join(animal.split()) + r'\b'
@@ -130,3 +138,13 @@ def match_animals(cost_df: pd.DataFrame, animal_df: pd.DataFrame) -> pd.DataFram
     cost_df.drop(columns=['date'], inplace=True)
     cost_df.drop_duplicates(inplace=True)
     return cost_df
+
+
+def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
+    cols = ['invoice', 'invoice_date']
+    fails[cols] = fails['COSTDESCRIPTION'].str.extract(
+        r" - (\d+) - (\d{4}-\d{2}-\d{2})")
+    pdfs[cols] = pdfs['name'].str.extract(r"_(\d+)_(\d{4}-\d{2}-\d{2})")
+    pdfs['cmp'] = pdfs['invoice'] + '_' + pdfs['invoice_date']
+    fails['cmp'] = fails['invoice'] + '_' + fails['invoice_date']
+    return fails, pdfs

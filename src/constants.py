@@ -7,6 +7,7 @@ load_dotenv()
 
 IS_DEBUG = int(os.environ.get("DEBUG_STATUS"))
 
+GLOBAL_CREDS = ""
 PROJECT_ID = os.environ.get("PROJECT_ID")
 SVC_ACCOUNT = os.environ.get("SERVICE_ACCOUNT_FILE")
 SECRET_NAME = os.environ.get("SECRET_NAME")
@@ -28,6 +29,8 @@ OAUTH_FILE = os.environ.get("AUTH_FILE")
 # GMAIL LABELS
 TEST_LABEL = 'Label_8306108300123845242'
 TEST_LABEL_COMPLETE = 'Label_7884775180973112661'
+FROM_LABEL = 'Label_5838368921937526589'
+TO_LABEL = 'Label_342337121491929089'
 
 # DATE CONSTANTS
 DATE_MDY = "%m-%d-%y"
@@ -39,6 +42,13 @@ DATA_DIR = Path("../data/")
 INVOICE_DIR = Path("../data/invoices/")
 NON_INVOICES_DIR = Path("../data/non_invoices/")
 UNPROCESSED_DIR = Path("../data/invoices/unprocessed_invoices")
+
+# SCOPES
+SCOPES = [
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify'
+]
 
 if Path(SVC_ACCOUNT).exists():
     with open(SVC_ACCOUNT, 'r') as f:

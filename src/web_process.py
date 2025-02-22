@@ -1,17 +1,11 @@
-from flask import Flask, request, redirect, url_for, session, render_template, jsonify
-from animal_getter import get_probable_matches
-import pandas as pd
 import re
-
-
-def add_invoices_col(fails: pd.DataFrame, pdfs: pd.DataFrame):
-    cols = ['invoice', 'invoice_date']
-    fails[cols] = fails['COSTDESCRIPTION'].str.extract(
-        r" - (\d+) - (\d{4}-\d{2}-\d{2})")
-    pdfs[cols] = pdfs['name'].str.extract(r"_(\d+)_(\d{4}-\d{2}-\d{2})")
-    pdfs['cmp'] = pdfs['invoice'] + '_' + pdfs['invoice_date']
-    fails['cmp'] = fails['invoice'] + '_' + fails['invoice_date']
-    return fails, pdfs
+import pandas as pd
+from flask import render_template, Response, Request
+from datetime import datetime as dt
+from constants import GLOBAL_CREDS
+from gfuncs import Google
+from animal_getter import get_probable_matches
+from animal_getter import upload_dataframe_to_database
 
 
 def show_failed_invoices(bad_invoice: pd.DataFrame, pdfs: pd.DataFrame, animals: pd.DataFrame):
@@ -104,3 +98,87 @@ def update_invoice_data(in_data: pd.DataFrame, corrected: pd.DataFrame) -> pd.Da
                     invoice = pd.concat([invoice, nrow])
                 invoice.drop(indices, inplace=True)
     return invoice
+
+
+def upload_corrected_files(google: Google, parent_folder: str, fails, goods) -> (str, str):
+    timestamp = dt.now().strftime("%Y-%m-%d-%H:%M:%S")
+    drop_cols = ['invoice', 'invoice_date', 'cmp']
+
+    error_name = f'{timestamp}_failures.csv'
+    success_name = f'{timestamp}_corrections.csv'
+    corrections_folder = google.get_drive_folder('corrections', parent_folder)
+
+    old_invoices = google.get_failures_csv(parent_folder)
+    # Remove old_failures into corrections folder
+    for invoice in old_invoices:
+        google.drive.files().update(
+            fileId=invoice.get('id'),
+            body={'name': f"{invoice.get('name')}.bak"},
+            removeParents=parent_folder,
+            addParents=corrections_folder,
+        ).execute()
+        print(f"Moved: {invoice.get('name')} -> 'corrections' folder")
+
+    error_id = google.upload_drive(
+        fails.drop(drop_cols, axis=1),
+        error_name, [parent_folder], 'text/csv'
+    )
+    if error_id:
+        print("Successfully Uploaded New Failures CSV")
+
+    success_id = google.upload_drive(
+        goods.drop(drop_cols, axis=1),
+        success_name, [corrections_folder], 'text/csv'
+    )
+
+    if success_id:
+        uploaded = upload_dataframe_to_database(goods.drop(drop_cols, axis=1))
+        print(f"ASM data Uploaded: {uploaded}")
+
+    return error_id, success_id
+
+
+def cleanup_old_failed_invoice(google: Google, parent_folder: str, pdfs, goods, fails):
+    """ Cleans up old failed invoice file and moves completed invoices into appropriate folders"""
+
+    batch = google.drive.new_batch_http_request()
+    folders = pd.DataFrame(google.get_invoice_folders(parent_folder))
+
+    completed_pdfs = goods['cmp'].unique()
+    incomplete_pdfs = fails['cmp'].unique()
+
+    updated_invoices = pdfs[
+        (pdfs['cmp'].isin(completed_pdfs)) &
+        (~pdfs['cmp'].isin(incomplete_pdfs))
+    ]
+    for pdf in updated_invoices.itertuples():
+        invoice_type = pdf.name.split('_')[0]
+        incomplete_folder = folders[folders['name'] == f"{
+            invoice_type}_incomplete"]['id'].values[0]
+        complete_folder = folders[folders['name'] == f"{
+            invoice_type}_completed"]['id'].values[0]
+        batch.add(google.drive.files().update(
+            fileId=pdf.id,
+            addParents=[complete_folder],
+            removeParents=[incomplete_folder],
+        ))
+    batch.execute()
+    global GLOBAL_CREDS
+    GLOBAL_CREDS = None
+
+
+def process_invoice_corrections(google: Google, req: Request, parent_folder: str, failed, pdfs, animals) -> Response:
+    post_df = get_post_data(req, animals)
+    updated = update_invoice_data(failed, post_df)
+
+    good_condition = updated['ANIMALCODE'] != 'ERROR_CODE'
+    to_upload = updated[good_condition]
+    to_fails = updated[~good_condition]
+
+    error, success = upload_corrected_files(
+        google, parent_folder, to_fails, to_upload)
+    if success:
+        cleanup_old_failed_invoice(
+            google, parent_folder, pdfs, to_upload, to_fails)
+
+    return render_template('post.html', invoices=post_df.shape[0], rows=to_upload.shape[0])
