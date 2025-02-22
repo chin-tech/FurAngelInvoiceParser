@@ -95,7 +95,7 @@ class Google:
         assert creds != None
         self.creds = creds
 
-    def init_from_secret(self, secret_name: str, project_id: str) -> Credentials:
+    def init_from_secret(self, project_id: str, secret_name: str) -> Credentials:
         creds = get_secret(secret_name, project_id)
 
         if not creds.valid or creds.expired:
