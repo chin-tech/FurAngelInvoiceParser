@@ -128,7 +128,6 @@ def oauth_callback():
 
     auth_response = request.url
     flow.fetch_token(authorization_response=auth_response)
-    session['creds'] = flow.credentials
 
     global GLOBAL_CREDS
     GLOBAL_CREDS = flow.credentials
