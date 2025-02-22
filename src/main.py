@@ -17,7 +17,7 @@ from constants import SVC_ACCOUNT, PROJECT_ID, SECRET_NAME
 from constants import INVOICE_DIR, NON_INVOICES_DIR, UNPROCESSED_DIR
 from constants import TEST_LABEL, TEST_LABEL_COMPLETE, TEST_EMAIL
 from constants import REDIRECT_URI
-from constants import IS_DEBUG, GLOBAL_CREDS
+from constants import IS_DEBUG
 from constants import get_login_data
 from web_process import show_failed_invoices, process_invoice_corrections
 from gfuncs import prune_by_threadId
@@ -38,6 +38,7 @@ GMAIL_INVOICE_LABEL = "Invoices/Vet invoice"
 DRIVE_INVOICES_FOLDER = "VET_INVOICES"
 
 # GLOBAL_CREDS = ""
+GLOBAL_CREDS = None
 
 
 app = Flask(__name__)
@@ -137,7 +138,6 @@ def oauth_callback():
 @app.route('/retry_failed', methods=['GET', 'POST'])
 def process_failed_invoices():
     global GLOBAL_CREDS
-    print(REDIRECT_URI)
     google = Google()
     if not GLOBAL_CREDS:
         redirect = REDIRECT_URI + '/oauth_callback'
@@ -152,8 +152,9 @@ def process_failed_invoices():
 
     if request.method == 'GET':
         return show_failed_invoices(failed, pdfs, animals)
-
-    return process_invoice_corrections(google, request, parent_folder, failed, pdfs, animals)
+    if request.method == 'POST':
+        GLOBAL_CREDS = None
+        return process_invoice_corrections(google, request, parent_folder, failed, pdfs, animals)
 
 
 @app.route('/dbg_failed', methods=['GET', 'POST'])

@@ -2,7 +2,6 @@ import re
 import pandas as pd
 from flask import render_template, Response, Request
 from datetime import datetime as dt
-from constants import GLOBAL_CREDS
 from gfuncs import Google
 from animal_getter import get_probable_matches
 from animal_getter import upload_dataframe_to_database
