@@ -255,18 +255,20 @@ class Google:
 
     def get_failures_csv(self, parent_id) -> Union[list[dict], None]:
         """Gets all csvs with _failures in the name in the appropriate folder"""
-        drive = self.drive
         try:
             query = f"'{
                 parent_id}' in parents and name contains '_failures' and mimeType='text/csv'"
-            res = drive.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
+            res = self.drive.files().list(q=query, spaces='drive',
+                                          fields='files(id,name)').execute()
             files = res.get('files')
-            if len(files) != 1:
+            if len(files) == 0:
+                raise ValueError(f"query returned empty:\n{query}")
+            if len(files) > 1:
                 files.sort(key=lambda x: x.get('name'), reverse=True)
             return files
         except Exception as e:
             print(f"Failed to grab failures, ironic huh? {e}")
-            return None
+            raise e
 
     def drive_file_to_bytes(self, file_id) -> Union[io.BytesIO, None]:
         """Reads a file from drive and returns a BytesIO object for manipulation"""

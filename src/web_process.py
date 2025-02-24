@@ -162,8 +162,6 @@ def cleanup_old_failed_invoice(google: Google, parent_folder: str, pdfs, goods, 
             removeParents=[incomplete_folder],
         ))
     batch.execute()
-    global GLOBAL_CREDS
-    GLOBAL_CREDS = None
 
 
 def process_invoice_corrections(google: Google, req: Request, parent_folder: str, failed, pdfs, animals) -> Response:

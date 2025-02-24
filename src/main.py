@@ -4,6 +4,8 @@ import pandas as pd
 import os
 import logging
 import shutil
+import pickle
+import base64
 from pathlib import Path
 import google.auth.transport.requests
 from google.oauth2 import id_token
@@ -118,9 +120,20 @@ def routine_processor():
         return 'Something Failed', 404
 
 
+@app.route('/start_auth')
+def start_oauth():
+    flow = Flow.from_client_config(OAUTH_FILE, scopes=SCOPES)
+    flow.redirect_uri = REDIRECT_URI + '/oauth_callback'
+    auth_url, state = flow.authorization_url(prompt='consent')
+    session['state'] = state
+    return redirect(auth_url)
+
+
 @app.route('/oauth_callback')
 def oauth_callback():
     state = session.get('state')
+    if not state or request.args.get('state') != state:
+        return 'Authorization state mismatch! Try again', 400
 
     flow = Flow.from_client_config(OAUTH_FILE, scopes=SCOPES, state=state)
     # url_for('oauth_callback', _external=True)
@@ -129,22 +142,22 @@ def oauth_callback():
     auth_response = request.url
     flow.fetch_token(authorization_response=auth_response)
 
-    global GLOBAL_CREDS
-    GLOBAL_CREDS = flow.credentials
+    session['user_creds'] = base64.b64encode(pickle.dumps(flow.credentials))
+    session['state'] = state
+
     return redirect(url_for('process_failed_invoices'))
 
 
 @app.route('/retry_failed', methods=['GET', 'POST'])
 def process_failed_invoices():
-    global GLOBAL_CREDS
     google = Google()
-    if not GLOBAL_CREDS:
-        redirect = REDIRECT_URI + '/oauth_callback'
-        google.creds = google.init_from_web(OAUTH_FILE, redirect)
-    if isinstance(google.creds, Response):
-        return google.creds
-    google.creds = GLOBAL_CREDS
+    creds_serialized = session.get('user_creds')
+    if not creds_serialized:
+        return redirect(url_for('start_oauth'))
+    google.creds = pickle.loads(base64.b64decode(creds_serialized))
     google.set_services()
+    if not google.email_matches(PROD_EMAIL):
+        return 'Authorization Error', 404
     parent_folder = google.get_drive_folder(DRIVE_INVOICES_FOLDER)
     failed, pdfs = google.get_failed_invoice_data(parent_folder)
     animals = prepare_animals_for_failure_matching()
@@ -152,16 +165,20 @@ def process_failed_invoices():
     if request.method == 'GET':
         return show_failed_invoices(failed, pdfs, animals)
     if request.method == 'POST':
-        GLOBAL_CREDS = None
         return process_invoice_corrections(google, request, parent_folder, failed, pdfs, animals)
 
 
 @app.route('/dbg_failed', methods=['GET', 'POST'])
 def fail_debug_processor():
-    global GLOBAL_CREDS
-    print(REDIRECT_URI)
+    assert IS_DEBUG == 1
     google = Google()
-    google.init_from_token(OAUTH_FILE, PROD_TOKEN)
+    creds_serialized = session.get('user_creds')
+    if not creds_serialized:
+        return redirect(url_for('start_oauth'))
+    google.creds = pickle.loads(base64.b64decode(creds_serialized))
+    google.set_services()
+    if not google.email_matches(PROD_EMAIL):
+        return 'Authorization Error', 404
     google.set_services()
     parent_folder = google.get_drive_folder(DRIVE_INVOICES_FOLDER)
     failed, pdfs = google.get_failed_invoice_data(parent_folder)
