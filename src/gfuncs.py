@@ -170,11 +170,15 @@ class Google:
         media = MediaIoBaseUpload(file_data, mimetype)
         try:
             file = self.drive.files().update(
-                body=metadata, media_body=media, fields='id').execute()
+                fileId=file_id, body=metadata,
+                media_body=media, fields='id'
+            ).execute()
         except HttpError as e:
             log.error(f"Connection Failed: {e}")
+            raise ValueError(e)
         except Exception as e:
             log.error(f"Unexpected RunTimeError: {e}")
+            raise ValueError(e)
         id = file.get('id')
         if id:
             log.info(f'{file_name} successfully added to Drive')
