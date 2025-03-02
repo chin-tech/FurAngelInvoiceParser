@@ -158,7 +158,7 @@ class Google:
         old_data = self.drive_file_to_bytes(file_id)
         old_data.seek(0)
         old_bytes = old_data.getvalue().decode('utf-8')
-        df = pd.DataFrame(old_bytes)
+        df = pd.read_csv(old_bytes)
         df = pd.concat([df, file_data], ignore_index=True)
         csv = df.to_csv(index=False)
         file_data = io.BytesIO(csv.encode())
