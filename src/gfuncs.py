@@ -165,7 +165,6 @@ class Google:
 
         metadata = {
             'name': file_name,
-            'parents': parents,
         }
         media = MediaIoBaseUpload(file_data, mimetype)
         try:
@@ -179,10 +178,10 @@ class Google:
         except Exception as e:
             log.error(f"Unexpected RunTimeError: {e}")
             raise ValueError(e)
-        id = file.get('id')
-        if id:
+        f_id = file.get('id')
+        if f_id:
             log.info(f'{file_name} successfully added to Drive')
-            return id
+            return f_id
         else:
             log.error(f"Failed to upload {file_name}")
             return None
