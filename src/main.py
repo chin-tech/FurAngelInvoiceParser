@@ -10,7 +10,6 @@ from pathlib import Path
 import google.auth.transport.requests
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
-from rich import print
 from flask import Flask, request, redirect, url_for
 from flask import session, jsonify, Response
 from constants import OAUTH_FILE, SCOPES, LOG_FILE
