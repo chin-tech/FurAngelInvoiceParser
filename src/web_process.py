@@ -152,15 +152,20 @@ def cleanup_old_failed_invoice(google: Google, parent_folder: str, pdfs, goods, 
     ]
     for pdf in updated_invoices.itertuples():
         invoice_type = pdf.name.split('_')[0]
-        incomplete_folder = folders[folders['name'] == f"{
-            invoice_type}_incomplete"]['id'].values[0]
-        complete_folder = folders[folders['name'] == f"{
-            invoice_type}_completed"]['id'].values[0]
-        batch.add(google.drive.files().update(
-            fileId=pdf.id,
-            addParents=[complete_folder],
-            removeParents=[incomplete_folder],
-        ))
+        try:
+            incomplete_folder = folders[folders['name'] == f"{
+                invoice_type}_incomplete"]['id'].values[0]
+            complete_folder = folders[folders['name'] == f"{
+                invoice_type}_completed"]['id'].values[0]
+            batch.add(google.drive.files().update(
+                fileId=pdf.id,
+                addParents=[complete_folder],
+                removeParents=[incomplete_folder],
+            ))
+        except Exception as e:
+            print(f"[-] Failed to add {pdf.name} to batch execution")
+            print(f"[Error] {e}")
+            continue
     batch.execute()
 
 
