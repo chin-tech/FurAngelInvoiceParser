@@ -131,6 +131,7 @@ def start_oauth():
 @app.route('/oauth_callback')
 def oauth_callback():
     state = session.get('state')
+    print(f'[DEBUG] - {state} vs. {request.args.get("state")}')
     if not state or request.args.get('state') != state:
         return 'Authorization state mismatch! Try again', 400
 
