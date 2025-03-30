@@ -47,10 +47,17 @@ def update_secret(name, project, value):
         SVC_ACCOUNT)
 
     parent = f"projects/{project}/secrets/{name}"
-    client.add_secret_version(
+    new_version = client.add_secret_version(
         parent=parent,
         payload={"data": pickle.dumps(value)},
     )
+    versions = client.list_secret_versions(parent=parent)
+    try:
+        for v in versions:
+            if v.name != new_version.name:
+                client.destroy_secret_version(name=v.name)
+    except Exception as e:
+        print(f"[Error] - Couldn't delete some versions: {e}")
 
 
 class Google:
