@@ -56,6 +56,7 @@ def update_secret(name, project, value):
         for v in versions:
             if v.name != new_version.name:
                 client.destroy_secret_version(name=v.name)
+                print(f"Destroyed previous version: {v.name}")
     except Exception as e:
         print(f"[Error] - Couldn't delete some versions: {e}")
 
@@ -108,7 +109,8 @@ class Google:
         if not creds.valid or creds.expired:
             creds.refresh(Request())
             if creds.refresh_token:
-                update_secret(secret_name, project_id, creds)
+                pass
+                # update_secret(secret_name, project_id, creds)
         self.creds = creds
 
     def set_services(self):
