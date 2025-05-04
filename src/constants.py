@@ -5,26 +5,28 @@ import os
 import json
 load_dotenv()
 
-IS_DEBUG = int(os.environ.get("DEBUG_STATUS"))
+IS_DEBUG = int(os.environ.get("DEBUG_STATUS", ""))
 
 GLOBAL_CREDS = ""
-PROJECT_ID = os.environ.get("PROJECT_ID")
-SVC_ACCOUNT = os.environ.get("SERVICE_ACCOUNT_FILE")
-SECRET_NAME = os.environ.get("SECRET_NAME")
-DB_NAME = os.environ.get("DB_NAME")
-DB_USERNAME = os.environ.get("DB_USER")
-DB_PASS = os.environ.get("DB_PASS")
-REDIRECT_URI = os.environ.get('REDIRECT_URL')
+PROJECT_ID = os.environ.get("PROJECT_ID", "")
+SVC_ACCOUNT = os.environ.get("SERVICE_ACCOUNT_FILE", "")
+SECRET_NAME = os.environ.get("SECRET_NAME", "")
+DB_NAME = os.environ.get("DB_NAME", "")
+DB_USERNAME = os.environ.get("DB_USER", "")
+DB_PASS = os.environ.get("DB_PASS", "")
+REDIRECT_URI = os.environ.get('REDIRECT_URL', "")
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # EMAILS
-PROD_EMAIL = os.environ.get("PROD_EMAIL")
-TEST_EMAIL = os.environ.get("TEST_EMAIL")
+PROD_EMAIL = os.environ.get("PROD_EMAIL", "")
+TEST_EMAIL = os.environ.get("TEST_EMAIL", "")
 
 # FILES
-LOG_FILE = Path(os.environ.get("LOG_FILE"))
-TEST_TOKEN = Path(os.environ.get("TEST_TOKEN"))
-PROD_TOKEN = Path(os.environ.get("PROD_TOKEN"))
-OAUTH_FILE = os.environ.get("AUTH_FILE")
+LOG_FILE = Path(os.environ.get("LOG_FILE", ""))
+TEST_TOKEN = Path(os.environ.get("TEST_TOKEN", ""))
+PROD_TOKEN = Path(os.environ.get("PROD_TOKEN", ""))
+OAUTH_FILE = os.environ.get("AUTH_FILE", "")
 
 # GMAIL LABELS
 TEST_LABEL = 'Label_8306108300123845242'

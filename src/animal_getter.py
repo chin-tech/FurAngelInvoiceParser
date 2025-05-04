@@ -19,6 +19,13 @@ NAMECOL = 'ANIMALNAME'
 
 
 def get_all_animals(login_data: dict) -> pd.DataFrame:
+    """
+    Retrieves all animals from the sheltermanager DB with provided credentials
+    Args:
+        login_data: (dict): A dictionary of keys:  [database, username, password]
+    Returns:
+        pd.DataFrame: Dataframe containing all animals
+    """
     try:
         session = requests.Session()
         session.post(LOGIN_URL + login_data['database'], data=login_data)
@@ -35,11 +42,20 @@ def get_all_animals(login_data: dict) -> pd.DataFrame:
             print("[Error]: CSV Data was empty!")
     except requests.exceptions.RequestException as e:
         print(f"[Request Error]: {e}")
+        return pd.DataFrame()
     except Exception as e:
         print(f"[Unexpected Error]: {e}")
+        return pd.DataFrame()
 
 
 def upload_dataframe_to_database(df: pd.DataFrame, is_debug: bool = False) -> bool:
+    """
+    Uploads the given dataframe to the sheltermanager DB
+    Args:
+        df (pd.DataFrame): The provided dataframe 
+    Returns:
+        bool: True if the operation succeeded, false otherwise
+    """
     login_data = get_login_data()
     try:
         session = requests.Session()
@@ -68,6 +84,17 @@ def upload_dataframe_to_database(df: pd.DataFrame, is_debug: bool = False) -> bo
 
 
 def prep_animal_df(df: pd.DataFrame, date_col: str, days_col: str, name_col: str) -> pd.DataFrame:
+    """
+    Prepares the animal dataframe retrieved from the `get_all_animals` function, by formatting datetime columns, normalizing dog names and calculating the end_date
+    Args:
+        df (pd.DataFrame): The dataframe of all animals
+        date_col (str): The name of the date column in the dataframe
+        days_col (str): The name of the days column in the dataframe
+        name_col (str): The name of the `name` column in the dataframe
+    Returns:
+        pd.DataFrame: The normalized dataframe
+
+    """
     df[date_col] = pd.to_datetime(df[date_col], format='mixed').dt.date
     df[date_col] = pd.to_datetime(df[date_col])
     df['name'] = df[name_col].str.lower().replace(r"[,'\"]", regex=True)
@@ -79,6 +106,7 @@ def prep_animal_df(df: pd.DataFrame, date_col: str, days_col: str, name_col: str
 
 def prepare_animals_for_failure_matching() -> pd.DataFrame:
     animals = get_all_animals(get_login_data())
+    assert isinstance(animals, pd.DataFrame)
     animals.sort_values(by='DATEBROUGHTIN', inplace=True)
     animals['date_in'] = animals['DATEBROUGHTIN'].dt.date
     animals['last_day_on_shelter'] = animals['end_date'].dt.date
@@ -102,7 +130,16 @@ def get_probable_matches(animal: str, df: pd.DataFrame, date: dt = None) -> pd.D
     return df
 
 
-def get_likely_animal(animal: str, date: dt, df: pd.DataFrame):
+def get_likely_animal(animal: str, date: dt, df: pd.DataFrame) -> pd.Series:
+    """
+    Attempts to find the closest matching animal in the database
+    Args:
+        animal (str): The name of the animal to find in the database
+        date (dt): The provided datetime of the invoiced charge, to help narrow down the search
+        df (pd.DataFrame): The animal dataframe retrieved from the database
+    Returns:
+        pd.Series: A pd.Series with either a fixed name and sheltercode or the unedited animal with an ERROR_CODE
+    """
 
     cleaned_animal = re.sub(r"['?,\"]", '', animal.lower()).strip()
     pattern = r'\b' + r'\b|\b'.join(cleaned_animal.split()) + r'\b'
@@ -125,10 +162,17 @@ def get_likely_animal(animal: str, date: dt, df: pd.DataFrame):
     if tmp.shape[0] == 1:
         return tmp[['ANIMALNAME', 'SHELTERCODE']].iloc[0]
     return pd.Series([animal, 'ERROR_CODE'], index=['ANIMALNAME', 'SHELTERCODE'])
-    # return (animal, 'ERROR_CODE')  # No single match found
 
 
 def match_animals(cost_df: pd.DataFrame, animal_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convenience function to prepare the dataframe for getting the likely animals, while removing duplicates
+    Args:
+        cost_df (pd.DataFrame): The resulting dataframe from a InvoiceParsers.items
+        animal_df (pd.DataFrame): The sheltermanager DB, dataframe
+    Returns:
+        pd.DataFrame: The fixed dataframe with appropraite names and columns
+    """
     cost_df['date'] = pd.to_datetime(cost_df['COSTDATE'])
     cost_df[['ANIMALNAME', 'ANIMALCODE']] = cost_df.apply(
         lambda x: get_likely_animal(x['ANIMALNAME'], x['date'], animal_df), axis=1)

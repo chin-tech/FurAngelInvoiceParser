@@ -2,12 +2,12 @@ import re
 import pandas as pd
 from flask import render_template, Response, Request
 from datetime import datetime as dt
-from gfuncs import Google
+from google_api_functions import GoogleClient
 from animal_getter import get_probable_matches
 from animal_getter import upload_dataframe_to_database
 
 
-def show_failed_invoices(bad_invoice: pd.DataFrame, pdfs: pd.DataFrame, animals: pd.DataFrame):
+def show_failed_invoices(bad_invoice: pd.DataFrame, pdfs: pd.DataFrame, animals: pd.DataFrame) -> Response:
     # bad_invoice, pdfs = add_invoices_col(bad_invoice, pdfs)
     bad_invoice['date'] = pd.to_datetime(bad_invoice['COSTDATE'])
     bad_invoice['name'] = bad_invoice['ANIMALNAME']
@@ -21,7 +21,7 @@ def show_failed_invoices(bad_invoice: pd.DataFrame, pdfs: pd.DataFrame, animals:
     for row in fails.itertuples():
         likely_animals = get_probable_matches(row.name, animals, row.date)
         data.append((row, likely_animals.to_dict(orient='records')))
-    return render_template('get.html', data_to_show=data, animal_df=animals.to_json(orient='records'))
+    return Response( render_template('get.html', data_to_show=data, animal_df=animals.to_json(orient='records')), 200 )
 
 
 def get_post_data(req, animals: pd.DataFrame) -> pd.DataFrame:
@@ -99,7 +99,7 @@ def update_invoice_data(in_data: pd.DataFrame, corrected: pd.DataFrame) -> pd.Da
     return invoice
 
 
-def upload_corrected_files(google: Google, parent_folder: str, fails, goods) -> (str, str):
+def upload_corrected_files(google: GoogleClient, parent_folder: str, fails, goods) -> tuple[str, str]:
     timestamp = dt.now().strftime("%Y-%m-%d-%H:%M:%S")
     drop_cols = ['invoice', 'invoice_date', 'cmp']
 
@@ -137,7 +137,7 @@ def upload_corrected_files(google: Google, parent_folder: str, fails, goods) -> 
     return error_id, success_id
 
 
-def cleanup_old_failed_invoice(google: Google, parent_folder: str, pdfs, goods, fails):
+def cleanup_old_failed_invoice(google: GoogleClient, parent_folder: str, pdfs, goods, fails):
     """ Cleans up old failed invoice file and moves completed invoices into appropriate folders"""
 
     batch = google.drive.new_batch_http_request()
@@ -169,7 +169,7 @@ def cleanup_old_failed_invoice(google: Google, parent_folder: str, pdfs, goods, 
     batch.execute()
 
 
-def process_invoice_corrections(google: Google, req: Request, parent_folder: str, failed, pdfs, animals) -> Response:
+def process_invoice_corrections(google: GoogleClient, req: Request, parent_folder: str, failed, pdfs, animals) -> Response:
     post_df = get_post_data(req, animals)
     updated = update_invoice_data(failed, post_df)
 

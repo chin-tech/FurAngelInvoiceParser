@@ -2,17 +2,15 @@ import re
 from fuzzywuzzy import fuzz, process
 
 
-def find_best_match(text: str, choices=list[str], scorer=None, threshold=51) -> str:
+def find_best_match(text: str, choices: list[str], scorer=None, threshold=51) -> str:
     if not scorer:
         scorer = fuzz.WRatio
     try:
         match, score = process.extractOne(
             text, choices, score_cutoff=threshold)
-        # print(match, score)
-        return match if score >= 50 else None
-    except Exception as e:
-        # print(f"[Error] {e}: {text}\n {choices[:5]}")
-        return None
+        return match if score >= 50 else ""
+    except Exception:
+        return ""
 
 
 class Vaccine:
@@ -88,7 +86,7 @@ class Test:
         "Echocardiogram",
     ]
 
-    def parse(self, txt: str) -> str:
+    def parse(self, txt: str) -> str | None:
         if "biopsy" in txt:
             return "Biopsy"
         if re.search(r"cbc|cpl|idx", txt):

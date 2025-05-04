@@ -5,8 +5,10 @@ import logging
 import base64
 import pickle
 import os
-from flask import session, redirect
+from flask import session, redirect 
+from werkzeug.wrappers.response import Response
 from collections import defaultdict
+from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from googleapiclient.errors import HttpError
@@ -31,8 +33,7 @@ log = logging.getLogger(__name__)
 GMAIL_DATE = "%a, %d %b %Y %H:%M:%S %z"
 GMAIL_DATE_ZONE = "%a, %d %b %Y %H:%M:%S %z (%Z)"
 
-NON_INVOICE_REGEXES = r"statement|treatment|estimate|record|payment"
-
+NON_INVOICE_REGEXES = r"statement|treatment|estimate|record|payment|Medical_history|care_instructions|Reval|\.jpe?g|RESCUE"
 
 def get_secret(name, project) -> Credentials:
     client = secretmanager.SecretManagerServiceClient.from_service_account_info(
@@ -49,7 +50,7 @@ def update_secret(name, project, value):
     parent = f"projects/{project}/secrets/{name}"
     new_version = client.add_secret_version(
         parent=parent,
-        payload={"data": pickle.dumps(value)},
+        payload=secretmanager.SecretPayload(data=pickle.dumps(value)),
     )
     versions = client.list_secret_versions(parent=parent)
     try:
@@ -61,14 +62,14 @@ def update_secret(name, project, value):
         print(f"[Error] - Couldn't delete some versions: {e}")
 
 
-class Google:
+class GoogleClient:
 
     def __init__(self):
         self.creds = None
         self.gmail = None
         self.drive = None
 
-    def init_from_web(self, config: dict, redirect_url: str = None) -> Credentials:
+    def init_from_web(self, config: dict, redirect_url: str = "") -> Response:
         """ Initializes credentials via a web request to authenticate the user"""
         flow = InstalledAppFlow.from_client_config(
             config, SCOPES
@@ -83,7 +84,7 @@ class Google:
         session['state'] = state
         return redirect(auth_url)
 
-    def init_from_token(self, config: str, token_file: str, secure: bool = True) -> Credentials:
+    def init_from_token(self, config: str, token_file: str, secure: bool = True) -> None:
         """ Initialize credentials from token file. Used for debugging purposes."""
         creds = None
         if token_file:
@@ -103,7 +104,7 @@ class Google:
         assert creds != None
         self.creds = creds
 
-    def init_from_secret(self, project_id: str, secret_name: str) -> Credentials:
+    def init_from_secret(self, project_id: str, secret_name: str) -> None:
         creds = get_secret(secret_name, project_id)
 
         if not creds.valid or creds.expired:
@@ -195,6 +196,24 @@ class Google:
             log.error(f"Failed to upload {file_name}")
             return None
 
+    def download_file(self, file_id: str, file_name: str, output_dir: str) -> None:
+        drive = self.drive
+        if not file_name:
+            file_name = 'test_1'  
+        try:
+            req = drive.files().get_media(fileId=file_id)
+            file_handler = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_handler, req)
+            download_complete = False
+            while not download_complete:
+                status, download_complete = downloader.next_chunk()
+            with open(Path(output_dir) / Path(file_name), 'wb') as f:
+                f.write(file_handler.getvalue())
+            return
+        except:
+            print('Failed to download', file_id)
+            return
+
     def upload_drive(self, file_data: Union[pd.DataFrame, io.BytesIO], file_name: str, parents: list[str], mimetype: str) -> str:
         """Uploads file to google drive and returns file id"""
         drive = self.drive
@@ -282,6 +301,29 @@ class Google:
             print(f"Failed to grab failures, ironic huh? {e}")
             raise e
 
+    def get_all_files_in_folder(self, parent_id) -> list[dict]:
+        drive = self.drive
+        files = []
+        page_token = None
+        try:
+            while True:
+                q = f"'{parent_id}' in parents"
+                res = drive.files().list(
+                    q=q, spaces='drive',
+                    fields='files(id,name,webViewLink)',
+                    pageToken=page_token,
+                    pageSize=500).execute()
+                if 'files' in res:
+                    files.extend(res.get('files', []))
+                page_token = res.get('nextPageToken')
+                if not page_token:
+                    break
+            return files
+        except Exception as e:
+            print(f"[Error] {e}")
+            return []
+
+
     def drive_file_to_bytes(self, file_id) -> Union[io.BytesIO, None]:
         """Reads a file from drive and returns a BytesIO object for manipulation"""
         drive = self.drive
@@ -298,7 +340,7 @@ class Google:
             log.error(f"Error reading file: {e}")
             return None
 
-    def get_invoice_folders(self, parent_id):
+    def get_invoice_folders(self, parent_id) -> str:
         drive = self.drive
         try:
             q = f"'{
@@ -307,8 +349,9 @@ class Google:
             return r.get('files')
         except Exception as e:
             log.error(f"Could not retrieve drive folders: {e}")
+            return ""
 
-    def get_failed_invoice_data(self, parent_folder) -> (pd.DataFrame, pd.DataFrame):
+    def get_failed_invoice_data(self, parent_folder) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Returns the failed invoice data from the parent folder. CSV data and PDF listing"""
         pdfs = pd.DataFrame(self.get_failed_pdfs(parent_folder))
         failed_invoices = self.get_failures_csv(parent_folder)
@@ -362,11 +405,11 @@ class Google:
 
             if not messages:
                 log.info(f"No messages found in folder '{folder_name}'.")
-                return
+                return []
             return messages
         except Exception as e:
             log.error(f"{e}")
-            return None
+            return []
 
     def process_invoices(self, messages: list[dict], folder_name: str, from_label: str, to_label: str, debugging: bool = False) -> bool:
         animals = get_all_animals(get_login_data())
@@ -492,7 +535,7 @@ def prune_by_threadId(messages: list[dict]) -> list[dict]:
     return messages
 
 
-def get_email_dates_sender(headers) -> (str, str):
+def get_email_dates_sender(headers) -> tuple[str, str]:
     sender = "unknown_sender"
     date = "1999-01-01"
     formats = [GMAIL_DATE, GMAIL_DATE_ZONE]
