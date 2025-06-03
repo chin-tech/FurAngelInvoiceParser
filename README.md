@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-FurAngelInvoiceParser is a Python application designed to automate the extraction of invoice data for Fur Angel, specifically tailored for deployment and operation within a Google Cloud Platform (GCP) environment. It processes PDF invoices retrieved from a designated Gmail inbox or Google Drive folder, extracts key information such as invoice number, date, vendor details, and line items, and then stores this structured data into an ASM (Application Specific Module) database. This automation significantly reduces manual data entry, improves accuracy, and streamlines accounting processes for Fur Angel by leveraging Google Cloud services.
+FurAngelInvoiceParser is a Python application designed to automate the extraction of invoice data for Fur Angel, specifically tailored for deployment and operation within a Google Cloud Platform (GCP) environment. It processes PDF invoices retrieved from a designated Gmail inbox or Google Drive folder, extracts key information such as invoice number, date, vendor details, and line items, and then stores this structured data into an ASM (Animal Shelter Manager) database. This automation significantly reduces manual data entry, improves accuracy, and streamlines accounting processes for Fur Angel by leveraging Google Cloud services.
 
 ## Features
 
