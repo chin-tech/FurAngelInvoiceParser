@@ -98,4 +98,4 @@ We welcome contributions to improve FurAngelInvoiceParser\! If you'd like to con
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+This project is licensed under the GNU Public License.
