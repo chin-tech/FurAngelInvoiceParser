@@ -1,4 +1,5 @@
 import re
+
 from fuzzywuzzy import fuzz, process
 
 
@@ -6,8 +7,7 @@ def find_best_match(text: str, choices: list[str], scorer=None, threshold=51) ->
     if not scorer:
         scorer = fuzz.WRatio
     try:
-        match, score = process.extractOne(
-            text, choices, score_cutoff=threshold)
+        match, score = process.extractOne(text, choices, score_cutoff=threshold)
         return match if score >= 50 else ""
     except Exception:
         return ""
@@ -33,7 +33,10 @@ class Vaccine:
     def parse(self, txt: str) -> str:
         txt = txt.lower()
         txt = re.sub(
-            r"(vaccine|vaccination|litter|1st|2nd|3rd|booster|adult|puppy|no lepto)", "", txt).strip()
+            r"(vaccine|vaccination|litter|1st|2nd|3rd|booster|adult|puppy|no lepto)",
+            "",
+            txt,
+        ).strip()
         if re.search(r"dhpp|da2pp|da2p-pv", txt):
             return "DHPP"
         if re.search(r"kennel cough", txt):
@@ -121,7 +124,6 @@ class Medication:
     INTERCEPTOR = "Interceptor Plus"
     HEARTGARD = "Heartgard"
     REVOLUTION = "Revolution"
-    BRAVECTO = "Bravecto"
     PANACUR = "Panacur"
     SENTINEL = "Sentinel"
     RIMADYL = "Rimadyl"
@@ -216,8 +218,7 @@ class Medication:
         "Tresaderm",
         "Triamcinolone",
         "Ursodiol",
-        "Electrolytes"
-        "Vitamin",
+        "ElectrolytesVitamin",
     ]
 
     def parse(self, txt: str) -> str:

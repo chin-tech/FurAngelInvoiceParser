@@ -1,8 +1,11 @@
-from pathlib import Path
-from parsers import Cost
-from dotenv import load_dotenv
-import os
 import json
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+from parsers import Cost
+
 load_dotenv()
 
 IS_DEBUG = int(os.environ.get("DEBUG_STATUS", ""))
@@ -14,7 +17,7 @@ SECRET_NAME = os.environ.get("SECRET_NAME", "")
 DB_NAME = os.environ.get("DB_NAME", "")
 DB_USERNAME = os.environ.get("DB_USER", "")
 DB_PASS = os.environ.get("DB_PASS", "")
-REDIRECT_URI = os.environ.get('REDIRECT_URL', "")
+REDIRECT_URI = os.environ.get("REDIRECT_URL", "")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
@@ -29,10 +32,10 @@ PROD_TOKEN = Path(os.environ.get("PROD_TOKEN", ""))
 OAUTH_FILE = os.environ.get("AUTH_FILE", "")
 
 # GMAIL LABELS
-TEST_LABEL = 'Label_8306108300123845242'
-TEST_LABEL_COMPLETE = 'Label_7884775180973112661'
-FROM_LABEL = 'Label_5838368921937526589'
-TO_LABEL = 'Label_342337121491929089'
+TEST_LABEL = "Label_8306108300123845242"
+TEST_LABEL_COMPLETE = "Label_7884775180973112661"
+FROM_LABEL = "Label_5838368921937526589"
+TO_LABEL = "Label_342337121491929089"
 
 # DATE CONSTANTS
 DATE_MDY = "%m-%d-%y"
@@ -47,19 +50,19 @@ UNPROCESSED_DIR = Path("../data/invoices/unprocessed_invoices")
 
 # SCOPES
 SCOPES = [
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.modify'
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
 ]
 
 if Path(SVC_ACCOUNT).exists():
-    with open(SVC_ACCOUNT, 'r') as f:
+    with open(SVC_ACCOUNT) as f:
         SVC_ACCOUNT = json.load(f)
 else:
     SVC_ACCOUNT = json.loads(SVC_ACCOUNT)
 
 if Path(OAUTH_FILE).exists():
-    with open(OAUTH_FILE, 'r') as f:
+    with open(OAUTH_FILE) as f:
         OAUTH_FILE = json.load(f)
 else:
     OAUTH_FILE = json.loads(OAUTH_FILE)
@@ -67,9 +70,9 @@ else:
 
 def get_login_data() -> dict:
     return {
-        'database': DB_NAME,
-        'username': DB_USERNAME,
-        'password': DB_PASS,
+        "database": DB_NAME,
+        "username": DB_USERNAME,
+        "password": DB_PASS,
     }
 
 
@@ -94,39 +97,52 @@ class Regex:
 PROCEDURE_MAP = {
     Regex.supplies: (Cost.SUPPLIES, None),
     Regex.surgery: (Cost.SURGERY, None),
-    Regex.test: (Cost.TEST, [
-        "TESTTYPE",
-        "TESTPERFORMEDDATE",
-        "TESTDUEDATE",
-        "TESTCOMMENTS",
-    ]),
-    Regex.vaccine: (Cost.VACCINATION, [
-        'VACCINATIONTYPE',
-        'VACCINATIONGIVENDATE',
-        'VACCINATIONCOMMENTS',
-        'VACCINATIONDUEDATE',
-    ]
+    Regex.test: (
+        Cost.TEST,
+        [
+            "TESTTYPE",
+            "TESTPERFORMEDDATE",
+            "TESTDUEDATE",
+            "TESTCOMMENTS",
+        ],
     ),
-    Regex.med_dose: (Cost.MEDICATION, [
-        "MEDICALGIVENDATE",
-        "MEDICALNAME",
-        "MEDICALDOSAGE",
-        "MEDICALCOMMENTS",
-    ]),
-    Regex.med_range_lb: (Cost.MEDICATION, [
-        "MEDICALGIVENDATE",
-        "MEDICALNAME",
-        "MEDICALDOSAGE",
-        "MEDICALCOMMENTS",
-    ]),
+    Regex.vaccine: (
+        Cost.VACCINATION,
+        [
+            "VACCINATIONTYPE",
+            "VACCINATIONGIVENDATE",
+            "VACCINATIONCOMMENTS",
+            "VACCINATIONDUEDATE",
+        ],
+    ),
+    Regex.med_dose: (
+        Cost.MEDICATION,
+        [
+            "MEDICALGIVENDATE",
+            "MEDICALNAME",
+            "MEDICALDOSAGE",
+            "MEDICALCOMMENTS",
+        ],
+    ),
+    Regex.med_range_lb: (
+        Cost.MEDICATION,
+        [
+            "MEDICALGIVENDATE",
+            "MEDICALNAME",
+            "MEDICALDOSAGE",
+            "MEDICALCOMMENTS",
+        ],
+    ),
     Regex.food: (Cost.FOOD, None),
-    Regex.med_other: (Cost.MEDICATION, [
-        "MEDICALGIVENDATE",
-        "MEDICALNAME",
-        "MEDICALDOSAGE",
-        "MEDICALCOMMENTS",
-    ]),
-
+    Regex.med_other: (
+        Cost.MEDICATION,
+        [
+            "MEDICALGIVENDATE",
+            "MEDICALNAME",
+            "MEDICALDOSAGE",
+            "MEDICALCOMMENTS",
+        ],
+    ),
     Regex.microchip: (Cost.MICROCHIP, None),
     Regex.grooming: (Cost.GROOMING, None),
     Regex.exam: (Cost.EXAMINATION, None),

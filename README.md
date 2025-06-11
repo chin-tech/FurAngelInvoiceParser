@@ -1,3 +1,4 @@
+![CI](https://github.com/chin-tech/FurAngelInvoiceParser/actions/workflows/ci.yml/badge.svg)
 # FurAngelInvoiceParser
 
 ## Project Overview

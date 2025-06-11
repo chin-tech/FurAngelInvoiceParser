@@ -1,20 +1,28 @@
-from operator import inv
-import re
-import pandas as pd
-import logging
 import io
-from typing import Union
+import logging
+import re
+from datetime import datetime as dt
+from pathlib import Path
 from typing import Protocol
+
+import pandas as pd
 from google import genai
 from pypdf import PdfReader
-from pathlib import Path
-from parsers import Cost, Test, Medication, Vaccine
-from constants import DATE_MDY, DATE_M_D_Y, DATE_MDYYYY, INVOICE_DIR, PROCEDURE_MAP, GEMINI_API_KEY
-from datetime import datetime as dt
+
+from constants import (
+    DATE_M_D_Y,
+    DATE_MDY,
+    DATE_MDYYYY,
+    GEMINI_API_KEY,
+    INVOICE_DIR,
+    PROCEDURE_MAP,
+)
+from parsers import Cost, Medication, Test, Vaccine
 
 DATE_FORMATS = [DATE_MDY, DATE_M_D_Y, DATE_MDYYYY]
 log = logging.getLogger(__name__)
 current_invoice = ""
+
 
 def make_clinic_abbreviation(clinic_name: str) -> str:
     words = clinic_name.split()
@@ -23,7 +31,7 @@ def make_clinic_abbreviation(clinic_name: str) -> str:
         if word[0].isupper() and len(word) > 2:
             abbreviation += word[0]
     return abbreviation
-            
+
 
 CLINICS = {
     "Waipio Pet Clinic": "WPC",
@@ -37,10 +45,8 @@ CLINICS = {
     "Wahiawa Pet Hospital": "WPH",
     "Waipahu Waikele Pet Hospital": "WWPH",
     "Animal House Veterinary Center": "AHVC",
-
-
-
 }
+
 
 def have_gemini_do_it(pdf_text: str, key=GEMINI_API_KEY) -> str:
     client = genai.Client(api_key=key)
@@ -55,10 +61,12 @@ def have_gemini_do_it(pdf_text: str, key=GEMINI_API_KEY) -> str:
             {pdf_text}
     """
     response = client.models.generate_content(
-        model="gemini-2.0-flash", contents=prompt,
+        model="gemini-2.0-flash",
+        contents=prompt,
     )
 
     return response.text or ""
+
 
 def get_description(option: str, cost_dict: dict, date: dt) -> dict:
     # option = match.group(1)
@@ -69,24 +77,27 @@ def get_description(option: str, cost_dict: dict, date: dt) -> dict:
     for pattern, (cost_type, fields) in PROCEDURE_MAP.items():
         matched = re.search(pattern, option)
         if matched:
-            cost_dict['COSTTYPE'] = cost_type
-            if cost_dict.get('COSTDESCRIPTION'):
-                cost_dict['COSTDESCRIPTION'] += option
+            cost_dict["COSTTYPE"] = cost_type
+            if cost_dict.get("COSTDESCRIPTION"):
+                cost_dict["COSTDESCRIPTION"] += option
             else:
-                cost_dict['COSTDESCRIPTION'] = option
+                cost_dict["COSTDESCRIPTION"] = option
             if not fields:
                 return cost_dict
             for field in fields:
-                if 'DATE' in field:
+                if "DATE" in field:
                     cost_dict[field] = date_string
-                if 'COMMENT' in field:
+                if "COMMENT" in field:
                     cost_dict[field] = option
-                if 'TYPE' in field:
-                    cost_dict[field] = medical_test.parse(
-                        option) if 'TEST' in field else vaccination.parse(option)
-                if 'NAME' in field:
+                if "TYPE" in field:
+                    cost_dict[field] = (
+                        medical_test.parse(option)
+                        if "TEST" in field
+                        else vaccination.parse(option)
+                    )
+                if "NAME" in field:
                     cost_dict[field] = medication.parse(option)
-                if 'DOSAGE' in field:
+                if "DOSAGE" in field:
                     cost_dict[field] = matched.group(1)
             return cost_dict
     cost_dict["COSTTYPE"] = Cost.OTHER
@@ -95,7 +106,8 @@ def get_description(option: str, cost_dict: dict, date: dt) -> dict:
 
 
 class InvoiceParser(Protocol):
-    """Creates an InvoiceParser that accepts the text from an invoice"""
+    """Creates an InvoiceParser that accepts the text from an invoice."""
+
     clinic = ""
     clinic_abrv = ""
     invoice_pattern = r"Invoice:\s*?(\d+)"
@@ -119,7 +131,9 @@ class InvoiceParser(Protocol):
     drive_incomplete = ""
     items = pd.DataFrame()
 
-    def __init__(self, txt: str, invoice_path: Union[Path, io.BytesIO], is_drive: bool = False):
+    def __init__(
+        self, txt: str, invoice_path: Path | io.BytesIO, is_drive: bool = False,
+    ) -> None:
         self.text = txt
         self.invoice = invoice_path
         self.name = invoice_path.name
@@ -133,49 +147,55 @@ class InvoiceParser(Protocol):
             self.fail_dir.mkdir(exist_ok=True, parents=True)
 
     def get_itemized_section(self) -> list[str]:
-        sections = list()
-        for match in re.finditer(self.itemized_begin_pattern, self.text, re.M):
-            start_text = self.text[match.start():]
+        sections = []
+        for match in re.finditer(self.itemized_begin_pattern, self.text, re.MULTILINE):
+            start_text = self.text[match.start() :]
             end_index = start_text.find(self.itemized_end_pattern)
             new_text = start_text[:end_index]
             # line_reduce = r"\n(?=\S)"
             if self.section_reduce_pattern:
-                while re.search(self.section_reduce_pattern, new_text, re.M):
-                    new_text = re.sub(
-                        self.section_reduce_pattern, " ", new_text, re.M)
+                while re.search(self.section_reduce_pattern, new_text, re.MULTILINE):
+                    new_text = re.sub(self.section_reduce_pattern, " ", new_text, re.MULTILINE)
             sections.append(new_text)
         return sections
 
     def get_dog_names(self) -> list[str]:
         try:
-            names = re.findall(self.dog_name_pattern, self.text, re.M)
+            names = re.findall(self.dog_name_pattern, self.text, re.MULTILINE)
         except Exception as e:
-            log.error(
-                f"{self.name} - get_dog_names | {self.dog_name_pattern} | {e}")
+            log.exception(f"{self.name} - get_dog_names | {self.dog_name_pattern} | {e}")
         if not names:
-            raise ValueError(
-                f"{self.name}: {self.clinic_abrv} | No Dog Names!")
+            msg = f"{self.name}: {self.clinic_abrv} | No Dog Names!"
+            raise ValueError(msg)
         return names
 
     def get_invoice_id(self) -> str:
-        match = re.search(self.invoice_pattern, self.text, re.M)
+        match = re.search(self.invoice_pattern, self.text, re.MULTILINE)
         if not match:
-            raise ValueError(f"{self.name}: Unable to parse invoice ID")
+            msg = f"{self.name}: Unable to parse invoice ID"
+            raise ValueError(msg)
         return match.group(1)
 
     def get_invoiced_date(self, date_formats: list[str] = DATE_FORMATS) -> dt:
-        match = re.search(self.invoice_date_pattern, self.text, re.M)
+        match = re.search(self.invoice_date_pattern, self.text, re.MULTILINE)
         if not match:
-            raise ValueError(f"{self.name}: Invoice has no match with given regex: {
-                             self.invoice_date_pattern}")
+            msg = (
+                f"{self.name}: Invoice has no match with given regex: {
+                    self.invoice_date_pattern
+                }"
+            )
+            raise ValueError(
+                msg,
+            )
         for format in date_formats:
             try:
-                date = dt.strptime(match.group(1), format)
-                return date
+                return dt.strptime(match.group(1), format)
             except Exception:
                 continue
-        raise ValueError(f"{self.name}: Found {match.group(
-            1)}: Couldn't parse with {date_formats}")
+        msg = f"{self.name}: Found {match.group(1)}: Couldn't parse with {date_formats}"
+        raise ValueError(
+            msg,
+        )
 
     def get_date(self, txt: str, date_formats: list[str] = DATE_FORMATS) -> dt:
         match = re.search(self.charges_date_pattern, txt)
@@ -183,13 +203,19 @@ class InvoiceParser(Protocol):
             return None
         for format in date_formats:
             try:
-                date = dt.strptime(match.group(1), format)
-                return date
+                return dt.strptime(match.group(1), format)
             except Exception:
                 continue
-        raise ValueError(f"{self.name}: [get_date()] Found: {
-                         match.group(1)} Couldn't parse with {date_formats}")
+        msg = (
+            f"{self.name}: [get_date()] Found: {match.group(1)} Couldn't parse with {
+                date_formats
+            }"
+        )
+        raise ValueError(
+            msg,
+        )
         ...
+        return None
 
     def get_price(self, txt: str) -> float:
         match = re.findall(self.price_pattern, txt)
@@ -203,57 +229,55 @@ class InvoiceParser(Protocol):
             return ""
         return match.group(1)
 
-    def get_animal_name_charge(self, txt: str):
+    def get_animal_name_charge(self, txt: str) -> None:
         if self.charges_dog_pattern:
             try:
                 match = re.search(self.charges_dog_pattern, txt)
             except Exception as e:
-                log.error(
-                    f"{self.name} - get_animal_name_charge | {self.dog_name_pattern} | {e}")
+                log.exception(
+                    f"{self.name} - get_animal_name_charge | {self.dog_name_pattern} | {e}",
+                )
             if not match:
                 return
-            else:
-                self.curr_dog = match.group(1)
-                return
+            self.curr_dog = match.group(1)
+            return
         return
-
 
     def parse_item(self, item: str) -> dict:
         item = item.lower()
         charges = {}
-        self.charge_date = self.get_date(
-            item) if self.get_date(item) else self.charge_date
+        self.charge_date = (
+            self.get_date(item) if self.get_date(item) else self.charge_date
+        )
         self.get_animal_name_charge(item)
         date = self.charge_date
         price = self.get_price(item)
         charge = self.get_charge(item)
         if not charge and price <= 0:
             return None
-        charges['COSTDATE'] = date.strftime(DATE_M_D_Y)
-        charges['COSTDESCRIPTION'] = f"[{
-            self.clinic} - {self.id} - {self.invoiced_date.date()}] "
-        charges['COSTAMOUNT'] = price
-        charges['ANIMALNAME'] = self.curr_dog
-        print(charges)
+        charges["COSTDATE"] = date.strftime(DATE_M_D_Y)
+        charges["COSTDESCRIPTION"] = (
+            f"[{self.clinic} - {self.id} - {self.invoiced_date.date()}] "
+        )
+        charges["COSTAMOUNT"] = price
+        charges["ANIMALNAME"] = self.curr_dog
         return get_description(charge, charges, date)
 
     def parse_invoice(self) -> None:
-        """Parse the self.text of the InvoiceParser. Sets the self.name, self.good, self.bad and self.local_dir"""
+        """Parse the self.text of the InvoiceParser. Sets the self.name, self.good, self.bad and self.local_dir."""
         items = []
         dog_names = self.get_dog_names()
         self.id = self.get_invoice_id()
         self.invoiced_date = self.get_invoiced_date()
         sections = self.get_itemized_section()
-        new_name = f"{self.clinic_abrv}_{
-            self.id}_{self.invoiced_date.date()}.pdf"
+        new_name = f"{self.clinic_abrv}_{self.id}_{self.invoiced_date.date()}.pdf"
         self.charge_date = self.invoiced_date
         for index, section in enumerate(sections):
             self.curr_dog = dog_names[index]
             for i, lines in enumerate(section.splitlines()):
                 if i == 0 or len(lines) < 60:
                     continue
-                charges = self.parse_item(
-                    lines)
+                charges = self.parse_item(lines)
                 if not charges:
                     continue
                 items.append(charges)
@@ -284,7 +308,6 @@ class VCAParser(InvoiceParser):
     invoice_pattern = r"Invoice:\s*?(\d+)"
     invoice_date_pattern = r"\| Date: (\d{1,2}/\d{1,2}/\d{1,4})"
     # dog_name_pattern = r"^\d{2}-\d{2}-d{2}\s+([A-Z].+?)  \s+?\d"
-    price_pattern = r"(\d+\.\d{2})"
     charges_date_pattern = r"(\d{1,2}\/\d{1,2}\/\d{2,4})"
     itemized_begin_pattern = r"^\s+(Date.*)"
     itemized_end_pattern = "Subtotal:"
@@ -356,59 +379,59 @@ class MMVCParser(InvoiceParser):
 #             "This invoice type has not been implemented!")
 #         ...
 
-class AIParser(InvoiceParser):
 
-    def parse_invoice(self, df: pd.DataFrame = pd.DataFrame()):
+class AIParser(InvoiceParser):
+    def parse_invoice(self, df: pd.DataFrame = pd.DataFrame()) -> None:
         if df.empty:
             csv_string = have_gemini_do_it(self.text)
             if not csv_string:
-                raise Exception("Gemini failed to find the desired information")
+                msg = "Gemini failed to find the desired information"
+                raise Exception(msg)
             df = pd.read_csv(io.StringIO(csv_string))
-        df['date'] = pd.to_datetime(df['date'])
-        self.clinic = df['clinic'].values[0]
+        df["date"] = pd.to_datetime(df["date"])
+        self.clinic = df["clinic"].values[0]
         self.clinic_abrv = make_clinic_abbreviation(self.clinic)
-        self.invoiced_date = df['date'].max()
-        self.id = df['invoiceNumber'].min()
+        self.invoiced_date = df["date"].max()
+        self.id = df["invoiceNumber"].min()
         invoice_items = []
-        def _inner_parse(x):
+
+        def _inner_parse(x) -> None:
             charge = self.parse_item(x)
             invoice_items.append(charge)
+
         df.apply(lambda x: _inner_parse(x), axis=1)
-        new_name = f"{self.clinic_abrv}_{
-            self.id}_{self.invoiced_date.date()}.pdf"
+        new_name = f"{self.clinic_abrv}_{self.id}_{self.invoiced_date.date()}.pdf"
         self.items = pd.DataFrame(invoice_items)
         self.name = new_name
 
-
     def parse_item(self, df_row: pd.Series) -> dict:
         charges = {}
-        self.curr_dog = df_row['dogName']
-        self.charge_date = df_row['date']
-        date = df_row['date']
-        price = df_row['totalPrice']
-        description = df_row['description']
+        self.curr_dog = df_row["dogName"]
+        self.charge_date = df_row["date"]
+        date = df_row["date"]
+        price = df_row["totalPrice"]
+        description = df_row["description"]
         if not description and price <= 0:
             return {}
-        charges['COSTDATE'] = date.strftime(DATE_M_D_Y)
-        charges['COSTDESCRIPTION'] = f"[{
-            df_row['clinic']} - {df_row['invoiceNumber']} - {date.date()}] "
-        charges['COSTAMOUNT'] = price
-        charges['ANIMALNAME'] = self.curr_dog
+        charges["COSTDATE"] = date.strftime(DATE_M_D_Y)
+        charges["COSTDESCRIPTION"] = (
+            f"[{df_row['clinic']} - {df_row['invoiceNumber']} - {date.date()}] "
+        )
+        charges["COSTAMOUNT"] = price
+        charges["ANIMALNAME"] = self.curr_dog
         return get_description(description, charges, date)
 
 
-
-def extract_text(pdf_path: Union[Path, io.BytesIO], mode=None):
-    text = ""
+def extract_text(pdf_path: Path | io.BytesIO, mode=None):
     reader = PdfReader(pdf_path)
     if not mode:
-        mode = 'plain'
-    text = '\n'.join([p.extract_text(extraction_mode=mode)
-                     for p in reader.pages])
-    return text
+        mode = "plain"
+    return "\n".join([p.extract_text(extraction_mode=mode) for p in reader.pages])
 
 
-def get_parser(invoice_path: Union[Path, io.BytesIO], filename: str = "", is_drive: bool = False) -> InvoiceParser:
+def get_parser(
+    invoice_path: Path | io.BytesIO, filename: str = "", is_drive: bool = False,
+) -> InvoiceParser:
     txt = extract_text(invoice_path)
     parser_map = {
         r"Waipio Pet Clinic": WaipioParser,
@@ -421,15 +444,14 @@ def get_parser(invoice_path: Union[Path, io.BytesIO], filename: str = "", is_dri
     }
     for clinic_regex, parser in parser_map.items():
         if re.search(clinic_regex, txt):
-            if re.search(r'Animal|Waipio|Wahiawa|Mililani', clinic_regex):
-                txt = extract_text(invoice_path, mode='layout')
+            if re.search(r"Animal|Waipio|Wahiawa|Mililani", clinic_regex):
+                txt = extract_text(invoice_path, mode="layout")
             if filename:
                 invoice_path = Path(filename)
             return parser(txt, invoice_path, is_drive)
-    else:
-        if filename:
-            invoice_path = Path(filename)
-        return AIParser(txt, invoice_path, is_drive)
+    if filename:
+        invoice_path = Path(filename)
+    return AIParser(txt, invoice_path, is_drive)
         # raise Exception(
         #     f"{filename if filename else invoice_path.name}: No Available Parser!")
 
