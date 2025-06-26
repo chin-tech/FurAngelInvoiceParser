@@ -50,10 +50,10 @@ app.web_creds_manager = CredentialManager(
     oauth_client_config_path=OAUTH_CLIENT_CONFIG_JSON_FILE
 )
 
-app.local_creds_manager = CredentialManager(
-    scopes=SCOPES,
-    oauth_client_config_path="../secrets/local_auth_file"
-)
+# app.local_creds_manager = CredentialManager(
+#     scopes=SCOPES,
+#     oauth_client_config_path=OAUTH_CLIENT_CONFIG_JSON_FILE
+# )
 
 app.secret_manager = SecretManager(
     project_id= PROJECT_ID,
