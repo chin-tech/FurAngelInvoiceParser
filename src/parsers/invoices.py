@@ -9,15 +9,16 @@ import pandas as pd
 from google import genai
 from pypdf import PdfReader
 
-from constants import (
-    DATE_M_D_Y,
+
+from constants.dates import (
     DATE_MDY,
     DATE_MDYYYY,
-    GEMINI_API_KEY,
-    INVOICE_DIR,
-    PROCEDURE_MAP,
+    DATE_M_D_Y
 )
-from parsers import Cost, Medication, Test, Vaccine
+
+from constants.project import GEMINI_API_KEY
+from constants.regex import PROCEDURE_MAP
+from parsers.items import Cost, Medication, Test, Vaccine
 
 DATE_FORMATS = [DATE_MDY, DATE_M_D_Y, DATE_MDYYYY]
 log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ def have_gemini_do_it(pdf_text: str, key=GEMINI_API_KEY) -> str:
     Extract the following information from the text:
     clinic, invoiceNumber, date, dogName,  description, quantity, totalPrice
     and return the data as a comma separated table.
-    If you cannot parse the content only return an empty string.
+    If you cannot parse the content OR the clinic name only return an empty string.
 
     Text:
             {pdf_text}
@@ -132,13 +133,16 @@ class InvoiceParser(Protocol):
     items = pd.DataFrame()
 
     def __init__(
-        self, txt: str, invoice_path: Path | io.BytesIO, is_drive: bool = False,
+        self, txt: str,
+        invoice_path: Path | io.BytesIO,
+        is_drive: bool = False,
+        default_dir: str = "../data/invoices"
     ) -> None:
         self.text = txt
         self.invoice = invoice_path
         self.name = invoice_path.name
-        self.success_dir = INVOICE_DIR / Path(f"{self.clinic_abrv}_completed")
-        self.fail_dir = INVOICE_DIR / Path(f"{self.clinic_abrv}_incomplete")
+        self.success_dir = default_dir / Path(f"{self.clinic_abrv}_completed")
+        self.fail_dir = default_dir / Path(f"{self.clinic_abrv}_incomplete")
         self.drive_completed = f"{self.clinic_abrv}_completed"
         self.drive_incomplete = f"{self.clinic_abrv}_incomplete"
 
@@ -452,13 +456,3 @@ def get_parser(
     if filename:
         invoice_path = Path(filename)
     return AIParser(txt, invoice_path, is_drive)
-        # raise Exception(
-        #     f"{filename if filename else invoice_path.name}: No Available Parser!")
-
-
-# def process_invoice(invoice: Union[io.BytesIO, Path], filename: str, is_drive: bool = False) -> (str, str, pd.DataFrame):
-#     parser = get_parser(invoice, filename=filename, is_drive=is_drive)
-#     parser.parse_invoice()
-#     if is_drive:
-#         return parser.drive_dir, parser.name, parser.items
-#     return parser.local_dir, parser.name, parser.items

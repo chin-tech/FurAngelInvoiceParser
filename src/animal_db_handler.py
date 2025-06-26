@@ -7,14 +7,19 @@ from io import StringIO
 import pandas as pd
 import requests
 
-from constants import get_login_data
+from constants.database import (
+    LOGIN_URL,
+    CSV_URL,
+    CSV_UPLOAD_URL,
+    DB_LOGIN_DATA
+)
 
 log = logging.getLogger(__name__)
 
-DATABASE_URL = "https://us06d.sheltermanager.com"
-LOGIN_URL = DATABASE_URL + "/login?smaccount="
-CSV_URL = DATABASE_URL + "/report_export_csv?id=216"
-CSV_UPLOAD_URL = DATABASE_URL + "/csvimport"
+# DATABASE_URL = "https://us06d.sheltermanager.com"
+# LOGIN_URL = DATABASE_URL + "/login?smaccount="
+# CSV_URL = DATABASE_URL + "/report_export_csv?id=216"
+# CSV_UPLOAD_URL = DATABASE_URL + "/csvimport"
 DATECOL = "DATEBROUGHTIN"
 DAYCOL = "TOTALDAYSONSHELTER"
 NAMECOL = "ANIMALNAME"
@@ -55,7 +60,7 @@ def upload_dataframe_to_database(df: pd.DataFrame, is_debug: bool = False) -> bo
     Returns:
         bool: True if the operation succeeded, false otherwise.
     """
-    login_data = get_login_data()
+    login_data = DB_LOGIN_DATA
     try:
         session = requests.Session()
         session.post(LOGIN_URL + login_data["database"], data=login_data)
@@ -100,12 +105,12 @@ def prep_animal_df(
     df["name"] = df[name_col].str.lower().replace(r"[,'\"]", regex=True)
     df[days_col] = pd.to_timedelta(df[days_col], unit="days")
     df["end_date"] = pd.to_datetime(df[date_col] + df[days_col] + td(days=1))
-    df.sort_values(by="end_date")
+    df.sort_values(by="end_date", inplace=True)
     return df
 
 
 def prepare_animals_for_failure_matching() -> pd.DataFrame:
-    animals = get_all_animals(get_login_data())
+    animals = get_all_animals(DB_LOGIN_DATA)
     assert isinstance(animals, pd.DataFrame)
     animals = animals.sort_values(by="DATEBROUGHTIN")
     animals["date_in"] = animals["DATEBROUGHTIN"].dt.date

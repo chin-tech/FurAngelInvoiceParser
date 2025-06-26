@@ -1,0 +1,59 @@
+# .github/workflows/ci-and-deploy.yml
+name: CI/CD to Main on successful pass
+
+on:
+  push:
+    branches:
+      - dev # Trigger on pushes to your development branch
+      - feature/** # Or any feature branch pattern
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+      - name: Setup environment (e.g., Python, Node.js)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: |
+          PYTHONPATH=${{ github.workspace }}/src pytest
+          ruff check src/
+
+
+  deploy_to_main:
+    runs-on: ubuntu-latest
+    needs: build_and_test
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Git user
+        run: |
+          git config user.name "Furangel_Deployment_bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch all branches
+        run: git fetch origin dev
+
+      - name: Merge dev into main
+        run: |
+          git merge origin/dev --no-ff --commit -m "Auto-merge dev into main from CI"
+
+      - name: Push to main
+        run: git push origin main
