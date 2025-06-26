@@ -53,7 +53,7 @@ jobs:
 
       - name: Merge dev into main
         run: |
-          git merge origin/dev --no-ff --commit -m "Auto-merge dev into main from CI"
+          git merge origin/dev --no-ff --allow-unrelated-histories --commit -m "Auto-merge dev into main from CI"
 
       - name: Push to main
         run: git push origin main
