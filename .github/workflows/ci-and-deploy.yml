@@ -28,7 +28,7 @@ jobs:
 
       - name: Run tests
         run: |
-          PYTHONPATH=./src pytest
+          PYTHONPATH=${{ github.workspace }}/src pytest
           ruff check src/
 
 
