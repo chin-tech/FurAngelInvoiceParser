@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-IS_DEBUG = int(os.environ.get("DEBUG_STATUS", ""))
+IS_DEBUG = int(os.environ.get("DEBUG_STATUS", "1"))
 PROJECT_ID = os.environ.get("PROJECT_ID", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 LOG_FILE = Path(os.environ.get("LOG_FILE", ""))
