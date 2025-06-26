@@ -49,41 +49,21 @@ jobs:
       - name: Get source commit details
         id: get_source_commit_info # Assign an ID to this step to get its outputs
         run: |
-          # github.event.head_commit.message holds the full commit message
+          # Get the commit message of the triggering commit
+          SOURCE_COMMIT_MESSAGE_RAW="${{ github.event.head_commit.message }}"
           # Use 'sed' to escape newlines if the message is multi-line, so it can be passed as a single line output
-          SOURCE_COMMIT_MESSAGE_ESCAPED=$(echo "${{ github.event.head_commit.message }}" | sed ':a;N;$!ba;s/\n/\\n/g')
-          
-          # github.sha is the full SHA of the triggering commit
-          SOURCE_COMMIT_SHA_SHORT="${{ github.sha.substring(0, 7) }}" # Get the first 7 characters for a short SHA
-
-          # Set outputs for subsequent steps to use
+          SOURCE_COMMIT_MESSAGE_ESCAPED=$(echo "$SOURCE_COMMIT_MESSAGE_RAW" | sed ':a;N;$!ba;s/\n/\\n/g')
           echo "source_commit_message=$SOURCE_COMMIT_MESSAGE_ESCAPED" >> "$GITHUB_OUTPUT"
-          echo "source_commit_sha_short=$SOURCE_COMMIT_SHA_SHORT" >> "$GITHUB_OUTPUT"
+          
+          # Get the first 7 characters for a short SHA using substring()
+          # Direct echo of the GitHub Actions expression into GITHUB_OUTPUT
+          echo "source_commit_sha_short=${{ github.sha.substring(0, 7) }}" >> "$GITHUB_OUTPUT"
 
-          # You could also get author, timestamp, etc.:
+          # Get author name
           echo "source_commit_author=${{ github.event.head_commit.author.name }}" >> "$GITHUB_OUTPUT"
           # echo "source_commit_timestamp=${{ github.event.head_commit.timestamp }}" >> "$GITHUB_OUTPUT"
-
-      - name: Commit changes to main
-        run: |
-          git add .
-          # Use '|| true' to make the command succeed even if the path doesn't exist on 'main'
-          git rm -rf tests/ || true
-          git rm -f requirements-dev.txt || true
-          
-          # Retrieve the outputs from the previous step
-          SOURCE_MSG="${{ steps.get_source_commit_info.outputs.source_commit_message }}"
-          SOURCE_SHA="${{ steps.get_source_commit_info.outputs.source_commit_sha_short }}"
-
-          # Construct the commit message. You can format this as you like.
-          # Common practice is to add relevant info at the end of a concise message.
-          COMMIT_MESSAGE="CI: Automated sync from development branch"
-          COMMIT_MESSAGE="${COMMIT_MESSAGE}\n\n" # Add a blank line for readability
-          COMMIT_MESSAGE="${COMMIT_MESSAGE}Triggered by commit: ${SOURCE_SHA}"
-          COMMIT_MESSAGE="${COMMIT_MESSAGE}\nOriginal message:\n${SOURCE_MSG}"
-          
-          git commit -m "$COMMIT_MESSAGE" || echo "No changes to commit"
 
       - name: Push changes to main
         run: |
           git push origin main
+
