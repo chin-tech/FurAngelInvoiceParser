@@ -13,10 +13,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          # Important: If you need history for tests, default depth is fine.
-          # If you intend to commit changes back in this job, use fetch-depth: 0
-          # if you need the full history for local git operations within the runner.
 
       - name: Setup environment (e.g., Python, Node.js)
         uses: actions/setup-python@v5
@@ -58,7 +54,7 @@ jobs:
           SOURCE_COMMIT_MESSAGE_ESCAPED=$(echo "${{ github.event.head_commit.message }}" | sed ':a;N;$!ba;s/\n/\\n/g')
           
           # github.sha is the full SHA of the triggering commit
-          SOURCE_COMMIT_SHA_SHORT="${{ github.sha::0:7 }}" # Get the first 7 characters for a short SHA
+          SOURCE_COMMIT_SHA_SHORT="${{ github.sha.substring(0, 7) }}" # Get the first 7 characters for a short SHA
 
           # Set outputs for subsequent steps to use
           echo "source_commit_message=$SOURCE_COMMIT_MESSAGE_ESCAPED" >> "$GITHUB_OUTPUT"
