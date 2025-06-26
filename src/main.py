@@ -1,47 +1,74 @@
 #!/usr/bin/env python3
-import base64
 import logging
 import os
-import pickle
+import json
 
 import google.auth.transport.requests
 from flask import Flask, Response, jsonify, redirect, request, session, url_for
 from google.oauth2 import id_token
-from google_auth_oauthlib.flow import Flow
 from werkzeug.middleware.proxy_fix import ProxyFix
+from googleauth import CredentialManager, SecretManager
+from google_services import DriveService,  Processor
+from blueprints.oauth_routes import auth_bp
+from blueprints.name_route import name_bp
+from utils import process_invoices
 
-from animal_getter import prepare_animals_for_failure_matching
-from constants import (
-    FROM_LABEL,
-    IS_DEBUG,
-    OAUTH_FILE,
-    PROD_EMAIL,
+from animal_db_handler import get_all_animals, prepare_animals_for_failure_matching
+#
+from constants.project import (
     PROJECT_ID,
+    SECRET_NAME,
+    SERVICE_ACCOUNT_CONFIG_FILE,
+    OAUTH_CLIENT_CONFIG_JSON_FILE,
     REDIRECT_URI,
     SCOPES,
-    SECRET_NAME,
-    SVC_ACCOUNT,
-    TO_LABEL,
+    DRIVE_INVOICES_FOLDER,
+
+
+
 )
-from google_api_functions import GoogleClient, prune_by_threadId
+from constants.database import (
+    DB_LOGIN_DATA
+)
 from web_process import process_invoice_corrections, show_failed_invoices
 
 log = logging.getLogger(__name__)
 log_formatter = logging.Formatter("[%(asctime)s] %(message)s")
 
-# GMAIL CONSTANTS
-GMAIL_INVOICE_LABEL = "Invoices/Vet invoice"
+ROUTINE_DAYS = 14
 
-# Drive Constants #
-DRIVE_INVOICES_FOLDER = "VET_INVOICES"
-
-# GLOBAL_CREDS = ""
-GLOBAL_CREDS = None
+REDIRECT_CALLBACK="/oauth_callback"
+FULL_REDIRECT_URL = REDIRECT_URI + REDIRECT_CALLBACK
 
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+app.web_creds_manager = CredentialManager(
+    scopes=SCOPES,
+    oauth_client_config_path=OAUTH_CLIENT_CONFIG_JSON_FILE
+)
+
+app.local_creds_manager = CredentialManager(
+    scopes=SCOPES,
+    oauth_client_config_path="../secrets/local_auth_file"
+)
+
+app.secret_manager = SecretManager(
+    project_id= PROJECT_ID,
+    secret_names = [SECRET_NAME]
+)
+
+
+
+app.register_blueprint(auth_bp, url_prefix="/auth")
+app.register_blueprint(name_bp, url_prefix="/names")
+
+# Test routes #
+# from blueprints.debug_routes import test_routes
+# app.register_blueprint(test_routes, url_prefix="/test")
+
 
 
 def verify_request():
@@ -54,13 +81,15 @@ def verify_request():
     try:
         request_adapter = google.auth.transport.requests.Request()
         decoded_token = id_token.verify_oauth2_token(token, request_adapter)
+        with open(SERVICE_ACCOUNT_CONFIG_FILE, 'rb') as f:
+            cfg_json = json.load(f)
 
-        if decoded_token["email"] != SVC_ACCOUNT["client_email"]:
+        if decoded_token["email"] != cfg_json["client_email"]:
             return jsonify({"error": "Unauthorized requester"}), 403
     except Exception as e:
         return jsonify({"error": f"Invalid token: {e!s}"}), 403
 
-    return None  # If everything is fine, return None
+    return None  
 
 
 @app.route("/", methods=["GET"])
@@ -70,126 +99,45 @@ def routine_invoice_processor():
         200,
     )
 
-
-@app.route("/process_all", methods=["GET"])
-def process_all_emailed_invoices():
-    assert IS_DEBUG == 1
-    google = GoogleClient()
-    google.init_from_secret(PROJECT_ID, SECRET_NAME)
-    google.set_services()
-    if not google.email_matches(PROD_EMAIL):
-        return Response("AUTHORIZATION ERRROR", "403")
-
-    messages = google.get_messages_from(GMAIL_INVOICE_LABEL)
-    if not messages:
-        log.error(f"No messages in folder! {GMAIL_INVOICE_LABEL} ")
-        return "No messages in specified folder!", 404
-    messages = prune_by_threadId(messages)
-    log.info(f"Starting processing of {len(messages)}")
-
-    if google.process_invoices(messages, DRIVE_INVOICES_FOLDER, FROM_LABEL, TO_LABEL):
-        return Response("Success!", 200)
-    return Response("Something Failed", 404)
-
-
 @app.route("/process_routine", methods=["GET"])
 def routine_processor():
     auth_error = verify_request()
     if auth_error:
         return auth_error
-    days = 14
-    google = GoogleClient()
-    google.init_from_secret(PROJECT_ID, SECRET_NAME)
-    google.set_services()
-    if not google.email_matches(PROD_EMAIL):
-        return Response("Authorization Error", 403)
-    messages = google.get_messages_from(GMAIL_INVOICE_LABEL, days)
-    messages = prune_by_threadId(messages)
+    creds = app.secret_manager.retrieve_secret_from_file(SECRET_NAME, SERVICE_ACCOUNT_CONFIG_FILE)
+    processor = Processor(creds)
+    success = process_invoices(processor, ROUTINE_DAYS )
+    if not success:
+        return Response("Something went wrong!", 304)
+    return Response("Success", 200)
 
-    if google.process_invoices(messages, DRIVE_INVOICES_FOLDER, FROM_LABEL, TO_LABEL):
-        return Response("Success!", 200)
-    return Response("Something Failed", 404)
-
-
-@app.route("/start_auth")
-def start_oauth():
-    flow = Flow.from_client_config(OAUTH_FILE, scopes=SCOPES)
-    flow.redirect_uri = REDIRECT_URI + "/oauth_callback"
-    auth_url, state = flow.authorization_url(prompt="consent")
-    session["state"] = state
-    return redirect(auth_url)
-
-
-@app.route("/oauth_callback")
-def oauth_callback():
-    state = session.get("state")
-    if not state or request.args.get("state") != state:
-        return "Authorization state mismatch! Try again", 400
-
-    flow = Flow.from_client_config(OAUTH_FILE, scopes=SCOPES, state=state)
-    # url_for('oauth_callback', _external=True)
-    flow.redirect_uri = REDIRECT_URI + "/oauth_callback"
-
-    auth_response = request.url
-    flow.fetch_token(authorization_response=auth_response)
-
-    session["user_creds"] = base64.b64encode(pickle.dumps(flow.credentials))
-    session["state"] = state
-
-    return redirect(url_for("process_failed_invoices"))
 
 
 @app.route("/retry_failed", methods=["GET", "POST"])
 def process_failed_invoices():
-    google = GoogleClient()
-    creds_serialized = session.get("user_creds")
-    if not creds_serialized:
-        return redirect(url_for("start_oauth"))
-    google.creds = pickle.loads(base64.b64decode(creds_serialized))
-    google.set_services()
-    if not google.email_matches(PROD_EMAIL):
-        return Response("Authorization Error", 404)
-    parent_folder = google.get_drive_folder(DRIVE_INVOICES_FOLDER)
-    failed, pdfs = google.get_failed_invoice_data(parent_folder)
+    creds = app.web_creds_manager.load_from_session_data(session)
+    if not creds:
+        return redirect(url_for("auth.start_oauth_process"))
+    drive = DriveService(creds)
+    drive_folder_id = drive.get_or_create_folder(DRIVE_INVOICES_FOLDER)
+    failed, pdfs = drive.get_all_failed_invoice_data(drive_folder_id)
     animals = prepare_animals_for_failure_matching()
 
     if request.method == "GET":
         return show_failed_invoices(failed, pdfs, animals)
     if request.method == "POST":
         return process_invoice_corrections(
-            google, request, parent_folder, failed, pdfs, animals,
+            drive, request, drive_folder_id, failed, pdfs, animals,
         )
     return Response("Unknown Method", 405)
 
 
-@app.route("/test_basic_api", methods=["GET"])
-def test_apis():
-    assert IS_DEBUG == 1
-    google = GoogleClient()
-    google.init_from_secret(PROJECT_ID, SECRET_NAME)
-    google.set_services()
-    match = google.email_matches(PROD_EMAIL)
 
-    assert match
-    assert google.drive is not None
-    assert google.gmail is not None
-    return Response("Success! We can access data!", 200)
+@app.route("/get_animals", methods=["GET"])
+def list_animals():
+    animals = get_all_animals(login_data=DB_LOGIN_DATA)
+    return Response(animals.to_html())
 
-
-@app.route("/test_auth", methods=["GET"])
-def test_auth_with_apis():
-    auth_error = verify_request()
-    if auth_error:
-        return auth_error
-    google = GoogleClient()
-    google.init_from_secret(PROJECT_ID, SECRET_NAME)
-    google.set_services()
-    match = google.email_matches(PROD_EMAIL)
-
-    assert match
-    assert google.drive is not None
-    assert google.gmail is not None
-    return Response("Success! We can access data!", 200)
 
 
 if __name__ == "__main__":

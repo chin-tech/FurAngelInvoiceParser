@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Unique Names</title>
+  <link type="text/css" href="/static/styles.css" rel="stylesheet">
+
+  <script defer>
+    const disjointData = {{ names | tojson | safe }};
+
+    function showRandomSamples() {
+      const shuffled = [...disjointData].sort(() => 0.5 - Math.random());
+      const sample = shuffled.slice(0, 10);
+      renderNamePickerOutput(sample);
+    }
+
+    function filterByLetter(letter) {
+      const filtered = disjointData.filter(name => name.startsWith(letter));
+      renderNamePickerOutput(filtered);
+    }
+
+    function renderNamePickerOutput(data) {
+      const output = document.getElementById('name-picker-output');
+      output.innerHTML = '';
+
+      if (data.length === 0) {
+        output.textContent = 'No results found.';
+        return;
+      }
+
+      const table = document.createElement('table');
+      table.className = 'table w-full';
+
+      const thead = document.createElement('thead');
+      thead.innerHTML = `<tr><th>Name</th></tr>`;
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      data.forEach(name => {
+        const tr = document.createElement('tr');
+        tr.classList.add('hover');
+        tr.innerHTML = `<td>${name}</td>`;
+        tbody.appendChild(tr);
+      });
+
+      table.appendChild(tbody);
+      output.appendChild(table);
+    }
+  </script>
+
+  <style>
+    @media (max-width: 768px) {
+      .flex-wrap-buttons {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container mx-auto p-4">
+    <img src="/static/foundation.png" alt="Furangel Image" style="width:500px; height:500px; margin-left: auto; margin-right: auto;">
+    <h1 class="text-2xl font-bold mb-4 mt-4">Furangel Name Picker</h1>
+      <br>
+    <p>None of these names are present in your ASM database. Feel free to use one.</p>
+      <br>
+
+    <form method="POST">
+      <!-- Random Button: Right Aligned -->
+      <div class="flex justify-center mb-2">
+        <button type="button" class="btn btn-secondary" onclick="showRandomSamples()">🎲 Random 10</button>
+      </div>
+
+      <!-- A-Z Letter Buttons -->
+        <div class="mb-4">
+          <div class="font-semibold mb-2"> Names by Letter: </div>
+          <div class="flex flex-wrap gap-1">
+            {% for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
+              <button type="button" class="btn btn-md" onclick="filterByLetter('{{ letter }}')">{{ letter }}</button>
+            {% endfor %}
+          </div>
+      </div>
+
+      <!-- Output area -->
+      <div id="name-picker-output" class="mb-4"></div>
+    </form>
+  </div>
+</body>
+</html>

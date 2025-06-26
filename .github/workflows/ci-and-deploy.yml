@@ -1,0 +1,93 @@
+# .github/workflows/ci-and-deploy.yml
+name: CI/CD to Main on successful pass
+
+on:
+  push:
+    branches:
+      - dev # Trigger on pushes to your development branch
+      - feature/** # Or any feature branch pattern
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Important: If you need history for tests, default depth is fine.
+          # If you intend to commit changes back in this job, use fetch-depth: 0
+          # if you need the full history for local git operations within the runner.
+
+      - name: Setup environment (e.g., Python, Node.js)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements*.txt
+
+      - name: Run tests
+        run: |
+          pytest
+          ruff check src/
+
+
+  deploy_to_main:
+    runs-on: ubuntu-latest
+    needs: build_and_test
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main 
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git user
+        run: |
+          git config user.name "Furangel_Deployment_bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get source commit details
+        id: get_source_commit_info # Assign an ID to this step to get its outputs
+        run: |
+          # github.event.head_commit.message holds the full commit message
+          # Use 'sed' to escape newlines if the message is multi-line, so it can be passed as a single line output
+          SOURCE_COMMIT_MESSAGE_ESCAPED=$(echo "${{ github.event.head_commit.message }}" | sed ':a;N;$!ba;s/\n/\\n/g')
+          
+          # github.sha is the full SHA of the triggering commit
+          SOURCE_COMMIT_SHA_SHORT="${{ github.sha::0:7 }}" # Get the first 7 characters for a short SHA
+
+          # Set outputs for subsequent steps to use
+          echo "source_commit_message=$SOURCE_COMMIT_MESSAGE_ESCAPED" >> "$GITHUB_OUTPUT"
+          echo "source_commit_sha_short=$SOURCE_COMMIT_SHA_SHORT" >> "$GITHUB_OUTPUT"
+
+          # You could also get author, timestamp, etc.:
+          echo "source_commit_author=${{ github.event.head_commit.author.name }}" >> "$GITHUB_OUTPUT"
+          # echo "source_commit_timestamp=${{ github.event.head_commit.timestamp }}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit changes to main
+        run: |
+          git add .
+          # Use '|| true' to make the command succeed even if the path doesn't exist on 'main'
+          git rm -rf tests/ || true
+          git rm -f requirements-dev.txt || true
+          
+          # Retrieve the outputs from the previous step
+          SOURCE_MSG="${{ steps.get_source_commit_info.outputs.source_commit_message }}"
+          SOURCE_SHA="${{ steps.get_source_commit_info.outputs.source_commit_sha_short }}"
+
+          # Construct the commit message. You can format this as you like.
+          # Common practice is to add relevant info at the end of a concise message.
+          COMMIT_MESSAGE="CI: Automated sync from development branch"
+          COMMIT_MESSAGE="${COMMIT_MESSAGE}\n\n" # Add a blank line for readability
+          COMMIT_MESSAGE="${COMMIT_MESSAGE}Triggered by commit: ${SOURCE_SHA}"
+          COMMIT_MESSAGE="${COMMIT_MESSAGE}\nOriginal message:\n${SOURCE_MSG}"
+          
+          git commit -m "$COMMIT_MESSAGE" || echo "No changes to commit"
+
+      - name: Push changes to main
+        run: |
+          git push origin main

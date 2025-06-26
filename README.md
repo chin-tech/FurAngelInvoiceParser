@@ -1,4 +1,4 @@
-![CI](https://github.com/chin-tech/FurAngelInvoiceParser/actions/workflows/ci.yml/badge.svg)
+![CI/CD](https://github.com/chin-tech/FurAngelInvoiceParser/actions/workflows/ci-and-deploy.yml/badge.svg)
 # FurAngelInvoiceParser
 
 ## Project Overview

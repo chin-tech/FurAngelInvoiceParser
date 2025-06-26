@@ -1,11 +1,12 @@
 import re
+import pandas as pd
 from datetime import datetime as dt
 
-import pandas as pd
 from flask import Request, Response, render_template
 
-from animal_getter import get_probable_matches, upload_dataframe_to_database
-from google_api_functions import GoogleClient
+from animal_db_handler import get_probable_matches, upload_dataframe_to_database
+from google_services import DriveService
+from utils import error_logger
 
 
 def show_failed_invoices(
@@ -109,48 +110,74 @@ def update_invoice_data(in_data: pd.DataFrame, corrected: pd.DataFrame) -> pd.Da
     return invoice
 
 
+#! TODO: Have to update google drive function
+@error_logger()
 def upload_corrected_files(
-    google: GoogleClient, parent_folder: str, fails, goods,
+    drive: DriveService, parent_folder: str, fails, goods,
 ) -> tuple[str, str]:
     timestamp = dt.now().strftime("%Y-%m-%d-%H:%M:%S")
     drop_cols = ["invoice", "invoice_date", "cmp"]
 
-    error_name = f"{timestamp}_failures.csv"
+    failures_name = f"{timestamp}_failures.csv"
     success_name = f"{timestamp}_corrections.csv"
-    corrections_folder = google.get_drive_folder("corrections", parent_folder)
-
-    old_invoices = google.get_failures_csv(parent_folder)
-    # Remove old_failures into corrections folder
-    for invoice in old_invoices:
-        google.drive.files().update(
-            fileId=invoice.get("id"),
-            body={"name": f"{invoice.get('name')}.bak"},
-            removeParents=parent_folder,
-            addParents=corrections_folder,
-        ).execute()
-
-    error_id = google.upload_drive(
-        fails.drop(drop_cols, axis=1), error_name, [parent_folder], "text/csv",
+    corrections_folder = drive.get_or_create_folder(
+        name="corrections",
+        parent_id=parent_folder
     )
-    if error_id:
+
+    old_failure_csv_list = drive.get_csv(
+        parent_id=parent_folder,
+        name_contains='_failures'
+    )
+    if len(old_failure_csv_list) != 1:
+        raise Exception("Too many failure CSVs in Invoice folder!")
+    old_csv = old_failure_csv_list[0]
+    print(
+        f"{old_csv.get('id')} | {old_csv.get('name')}"
+    )
+    print(f"Attempting to move csv FROM: {parent_folder} -> {corrections_folder}")
+    new_name = f"{old_csv.get('name')}.bak"
+
+    ## Create a backup of failures csv ##
+    movement_id = drive.move_file(
+        id=old_csv.get('id'),
+        old_parents=[parent_folder],
+        new_parents=[corrections_folder],
+        new_name=new_name,
+        execute=True
+    )
+    if movement_id:
+        print(f"Successfully moved: {old_csv.get('name')}: {movement_id}")
+
+    failure_id = drive.upload_file(
+        name=failures_name,
+        data=fails.drop(drop_cols, axis=1),
+        mime_type='csv',
+        parents=[parent_folder]
+    )
+    if failure_id:
         pass
 
-    success_id = google.upload_drive(
-        goods.drop(drop_cols, axis=1), success_name, [corrections_folder], "text/csv",
+    good_df = goods.drop(drop_cols, axis=1)
+    success_id = drive.upload_file(
+        name=success_name,
+        data=good_df,
+        mime_type='csv',
+        parents=[corrections_folder]
     )
 
     if success_id:
-        upload_dataframe_to_database(goods.drop(drop_cols, axis=1))
+        upload_dataframe_to_database(good_df)
 
-    return error_id, success_id
+    return failure_id, success_id
 
 
 def cleanup_old_failed_invoice(
-    google: GoogleClient, parent_folder: str, pdfs, goods, fails,
+    drive: DriveService, parent_folder: str, pdfs, goods, fails,
 ) -> None:
     """Cleans up old failed invoice file and moves completed invoices into appropriate folders."""
-    batch = google.drive.new_batch_http_request()
-    folders = pd.DataFrame(google.get_invoice_folders(parent_folder))
+    batch = drive.service.new_batch_http_request()
+    folders = pd.DataFrame(drive.get_folders(parent_folder))
 
     completed_pdfs = goods["cmp"].unique()
     incomplete_pdfs = fails["cmp"].unique()
@@ -168,11 +195,11 @@ def cleanup_old_failed_invoice(
                 "id"
             ].values[0]
             batch.add(
-                google.drive.files().update(
-                    fileId=pdf.id,
-                    addParents=[complete_folder],
-                    removeParents=[incomplete_folder],
-                ),
+                drive.move_file(
+                    id=pdf.id,
+                    old_parents=[incomplete_folder],
+                    new_parents=[complete_folder],
+                )
             )
         except Exception:
             continue
@@ -180,7 +207,7 @@ def cleanup_old_failed_invoice(
 
 
 def process_invoice_corrections(
-    google: GoogleClient, req: Request, parent_folder: str, failed, pdfs, animals,
+    drive: DriveService, req: Request, parent_folder: str, failed, pdfs, animals,
 ) -> Response:
     post_df = get_post_data(req, animals)
     updated = update_invoice_data(failed, post_df)
@@ -189,10 +216,10 @@ def process_invoice_corrections(
     to_upload = updated[good_condition]
     to_fails = updated[~good_condition]
 
-    error, success = upload_corrected_files(google, parent_folder, to_fails, to_upload)
+    error, success = upload_corrected_files(drive, parent_folder, to_fails, to_upload)
     if success:
-        cleanup_old_failed_invoice(google, parent_folder, pdfs, to_upload, to_fails)
+        cleanup_old_failed_invoice(drive, parent_folder, pdfs, to_upload, to_fails)
 
-    return render_template(
+    return Response(render_template(
         "post.html", invoices=post_df.shape[0], rows=to_upload.shape[0],
-    )
+    ))
