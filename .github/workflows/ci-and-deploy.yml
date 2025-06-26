@@ -14,6 +14,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+
       - name: Setup environment (e.g., Python, Node.js)
         uses: actions/setup-python@v5
         with:
@@ -38,32 +39,20 @@ jobs:
       - name: Checkout main branch
         uses: actions/checkout@v4
         with:
-          ref: main 
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Git user
+      - name: Set up Git user
         run: |
           git config user.name "Furangel_Deployment_bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Get source commit details
-        id: get_source_commit_info # Assign an ID to this step to get its outputs
+      - name: Fetch all branches
+        run: git fetch origin dev
+
+      - name: Merge dev into main
         run: |
-          # Get the commit message of the triggering commit
-          SOURCE_COMMIT_MESSAGE_RAW="${{ github.event.head_commit.message }}"
-          # Use 'sed' to escape newlines if the message is multi-line, so it can be passed as a single line output
-          SOURCE_COMMIT_MESSAGE_ESCAPED=$(echo "$SOURCE_COMMIT_MESSAGE_RAW" | sed ':a;N;$!ba;s/\n/\\n/g')
-          echo "source_commit_message=$SOURCE_COMMIT_MESSAGE_ESCAPED" >> "$GITHUB_OUTPUT"
-          
-          # Get the first 7 characters for a short SHA using substring()
-          # Direct echo of the GitHub Actions expression into GITHUB_OUTPUT
-          echo "source_commit_sha_short=${{ github.sha.substring(0, 7) }}" >> "$GITHUB_OUTPUT"
+          git merge origin/dev --no-ff --commit -m "Auto-merge dev into main from CI"
 
-          # Get author name
-          echo "source_commit_author=${{ github.event.head_commit.author.name }}" >> "$GITHUB_OUTPUT"
-          # echo "source_commit_timestamp=${{ github.event.head_commit.timestamp }}" >> "$GITHUB_OUTPUT"
-
-      - name: Push changes to main
-        run: |
-          git push origin main
-
+      - name: Push to main
+        run: git push origin main
