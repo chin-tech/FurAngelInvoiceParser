@@ -20,12 +20,13 @@ def start_oauth_process():
 
 @auth_bp.route("/oauth_callback")
 def oauth_callback():
-    if request.args.get('state') != session.get('state'):
+    stored_state = session.pop('state', None)
+    if request.args.get('state') != stored_state:
         return Response("State Mismatch", 400)
     full_redirect_url = REDIRECT_URI + "/auth/oauth_callback"
     flow = current_app.web_creds_manager.create_web_flow(
         redirect_url=full_redirect_url,
-        state=session.get('state'),
+        state=stored_state,
     )
     flow.fetch_token(authorization_response=request.url)
     current_app.web_creds_manager._save_to_session_data(session, flow.credentials)
