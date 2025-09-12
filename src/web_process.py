@@ -16,7 +16,8 @@ def show_failed_invoices(
     bad_invoice["date"] = pd.to_datetime(bad_invoice["COSTDATE"])
     bad_invoice["name"] = bad_invoice["ANIMALNAME"]
     bad_invoice = bad_invoice.sort_values(by="name")
-    link_map = pdfs.set_index("cmp")["webViewLink"]
+    link_map = pdfs.drop_duplicates(subset="cmp", keep="first").set_index("cmp")["webViewLink"]
+    # link_map = pdfs.set_index("cmp")["webViewLink"].unique()
     bad_invoice["link"] = bad_invoice["cmp"].map(link_map)
     fails = bad_invoice[
         ["name", "invoice", "link", "date", "COSTDATE"]
