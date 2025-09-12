@@ -143,7 +143,7 @@ def list_animals():
 if __name__ == "__main__":
     app.secret_key = os.urandom(24)
     app.run(
-        debug=True,
+        debug=False,
         host="0.0.0.0",
         port=8000,
         load_dotenv=True,
